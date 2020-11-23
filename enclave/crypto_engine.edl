@@ -3,28 +3,47 @@ enclave {
 from "sgx_tsgxssl.edl" import *;
 
 	trusted {
-		public void generateRSAKeyPair(
-			[out, count=RSAKeysLength]char* RSAPublicKey,
-			[out, count=RSAKeysLength]char* RSAPrivateKey,
-			size_t RSAKeysLength
+		public int SGXgenerateRSAKeyPair(
+			[out, count=bufferLength]char* RSAPublicKey,
+			[out, count=bufferLength]char* RSAPrivateKey,
+			size_t bufferLength,
+            size_t nrBits
 		);
 
-		public void SGXEncryptRSA(
-		[in, readonly, count=public_key_length]const char* public_key, size_t public_key_length,
-		[in, readonly, count=plaintext_length]const char* plaintext, size_t plaintext_length,
-		[out, count=ciphertext_length]char* ciphertext, size_t ciphertext_length,
-		[out, count=1]int* cipherTextLength
+		public int SGXEncryptRSA(
+            [in, readonly, count=public_key_length]const char* public_key, size_t public_key_length,
+            [in, readonly, count=plaintext_length]const unsigned char* plaintext, size_t plaintext_length,
+            [out, count=ciphertext_length]unsigned char* ciphertext, size_t ciphertext_length,
+            [out, count=1]size_t* cipherTextLength
 		);
 
-		public void SGXDecryptRSA(
-		[in, readonly, count=private_key_ciphered_length]const char* private_key_ciphered, size_t private_key_ciphered_length,
-		[in, readonly, count=ciphertext_length]const char* ciphertext, size_t ciphertext_length,
-		[out, count=plaintext_length]char* plaintext, size_t plaintext_length,
-		[user_check]int* plainTextLength
+		public int SGXDecryptRSA(
+            [in, readonly, count=private_key_ciphered_length]const char* private_key_ciphered,
+            size_t private_key_ciphered_length,
+            [in, readonly, count=ciphertext_length]const unsigned char* ciphertext, 
+            size_t ciphertext_length,
+            [out, count=plaintext_length]unsigned char* plaintext,
+            size_t plaintext_length,
+            [user_check]size_t* plainTextLength
 		);
+
+        // Root Key Handling functions....
+        public int SGXSetRootKeySealed(
+            [in, readonly, count=root_key_len_sealed]const unsigned char *root_key_sealed,
+            size_t root_key_len_sealed
+        );
+        public int SGXGetRootKeySealedLength(
+            [user_check]size_t* root_key_len_sealed
+        );
+        public int SGXGetRootKeySealed(
+            [out, count=root_key_len_sealed]unsigned char *root_key_sealed,
+            size_t root_key_len_sealed
+        );
     };
 
     untrusted {
-
+        [cdecl] int pthread_wait_timeout_ocall (unsigned long long waiter, unsigned long long timeout);
+        [cdecl] int pthread_create_ocall(unsigned long long self);
+        [cdecl] int pthread_wakeup_ocall(unsigned long long waiter);
     }; 
 };

@@ -1,5 +1,6 @@
 #include <exception>
 #include <stdexcept>
+#include <sqlite3.h>
 #include "CryptoEntity.h"
 
 CryptoEntity::CryptoEntity() {
@@ -15,6 +16,7 @@ CryptoEntity::CryptoEntity() {
 			throw std::runtime_error("Failed to create the launch token file.");
 		}
 	}
+
 	else {
 		// read the token from saved file
 		const size_t read_num = fread(launch_token, 1,
@@ -28,6 +30,7 @@ CryptoEntity::CryptoEntity() {
 	// Step 2: call sgx_create_enclave to initialize an enclave instance
 	ret = sgx_create_enclave(this->kEnclaveFile, SGX_DEBUG_FLAG, &launch_token, &updated, &this->enclave_id_, NULL);
 	if (ret != SGX_SUCCESS) {
+        printf("%s:%i\n", __FILE__, __LINE__);
 		throw std::runtime_error("Failed to create enclave.");
 	}
 
@@ -46,10 +49,13 @@ CryptoEntity::CryptoEntity() {
 }
 
 void CryptoEntity::RSAKeyGeneration(char* publicKey, char* privateKey) {
-	sgx_status_t ret;
+	sgx_status_t stat;
+    int ret;
 
-	ret = generateRSAKeyPair(this->enclave_id_, publicKey, privateKey, KEY_SIZE);
-	if (ret != SGX_SUCCESS)
+	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, publicKey, privateKey, KEY_SIZE, 2048);
+	if (stat != SGX_SUCCESS)
+		throw new std::exception;
+	if (ret != 0)
 		throw new std::exception;
 }
 
@@ -57,19 +63,29 @@ void CryptoEntity::RSAInitEncrypt(char* key) {
 	this->initializedKey = key;
 }
 
-char* CryptoEntity::RSAEncrypt(char* plainData, int* cipherLength) {
+#if 0
+void printhex(const char *s, unsigned char *buf, unsigned long length){
+    int i;
+    printf("%s\n", s);
+    for (i=0; i< (int)length; i++) {
+        if ((i % 16) == 0) printf("\n");
+        printf("%02X ", buf[i]);
+    }
+    printf("\n");
+}
+#endif
+
+
+unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
 	sgx_status_t ret;
-	char* cipherData = (char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(char));
+	unsigned char* cipherData = (unsigned char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(unsigned char));
+    int retval;
 
-	ret = SGXEncryptRSA(this->enclave_id_, this->initializedKey, strlen(this->initializedKey),
-		plainData, strlen(plainData), cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
-	if (ret != SGX_SUCCESS)
+	ret = SGXEncryptRSA(this->enclave_id_, &retval, this->initializedKey, strlen(this->initializedKey),
+		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
+    
+	if (ret != SGX_SUCCESS || retval != 0)
 		throw std::runtime_error("Encryption failed\n");
-	
-	if(*cipherLength < 1){
-		throw std::runtime_error("Encryption failed\n");
-	}
-
 	return cipherData;
 }
 
@@ -77,20 +93,22 @@ void CryptoEntity::RSAInitDecrypt(char* key) {
 	this->initializedKey = key;
 }
 
-char* CryptoEntity::RSADecrypt(char* cipherData, int* plainLength) {
-	sgx_status_t ret;
-	char* plainData = (char*)malloc(PLAIN_BUFFER_LENGTH * sizeof(char));
-	ret = SGXDecryptRSA(this->enclave_id_,
+
+uint8_t* CryptoEntity::RSADecrypt(const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
+	sgx_status_t stat;
+    int max_rsa_size = 8 * 1024;
+
+	uint8_t* plainData = (uint8_t*)malloc(max_rsa_size * sizeof(uint8_t));
+    int retval;
+	stat = SGXDecryptRSA(
+            this->enclave_id_,
+            &retval,
 			this->initializedKey, KEY_SIZE,
-			cipherData, CIPHER_BUFFER_LENGTH,
-			plainData, PLAIN_BUFFER_LENGTH, plainLength);
-	if (ret != SGX_SUCCESS)
+			cipherData, cipherDataLength,
+			plainData, max_rsa_size, plainLength);
+	if (stat != SGX_SUCCESS || retval != 0) {
 		throw std::runtime_error("Decryption failed\n");
-
-	if(*plainLength < 1){
-		throw std::runtime_error("Decryption failed\n");
-	}
-
+    }
 	return plainData;
 }
 

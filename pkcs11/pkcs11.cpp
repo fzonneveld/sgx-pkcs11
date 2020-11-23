@@ -1,33 +1,79 @@
+#include <map>
 #include "pkcs11-interface.h"
 
 
 CK_SLOT_ID PKCS11_SLOT_ID = 1;
 CK_SESSION_HANDLE PKCS11_SESSION_ID = 1;
 
-CK_BBOOL pkcs11_SGX_initialized = CK_FALSE;
-CK_BBOOL pkcs11_SGX_session_opened = CK_FALSE;
 CK_ULONG pkcs11_SGX_session_state = CKS_RO_PUBLIC_SESSION;
-PKCS_SGX_CK_OPERATION pkcs11_SGX_active_operation = PKCS11_SGX_CK_OPERATION_NONE;
-CryptoEntity *crypto;
+CryptoEntity *crypto=NULL;
+
+
+CK_FUNCTION_LIST functionList = {
+#undef CK_NEED_ARG_LIST
+#define CK_PKCS11_FUNCTION_INFO(name) name,
+#include "../cryptoki/pkcs11f.h"
+#undef CK_PKCS11_FUNCTION_INFO
+};
+
+typedef struct session_state {
+    CK_ULONG slotID;
+    CK_ULONG sessionState;
+} session_state_t;
+
+typedef struct pkcs11_session {
+    CK_ULONG slotID;
+    CK_ULONG state;
+    CK_OBJECT_HANDLE handle;
+    PKCS_SGX_CK_OPERATION operation;
+} pkcs11_session_t;
+
+std::map<CK_SESSION_HANDLE, pkcs11_session_t> sessions;
+static CK_ULONG sessionHandleCnt = 0;
+
+static CK_ULONG nr_slots=0;
+
+CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
+{
+    *ppFunctionList = &functionList;
+    return CKR_OK;
+}
+
+static pkcs11_session_t *get_session(CK_SESSION_HANDLE handle) {
+
+    // Find session handle
+    std::map<CK_SESSION_HANDLE, pkcs11_session_t>::iterator iter = sessions.find(handle);
+    
+    return iter != sessions.end() ? &iter->second : NULL;
+}
+
+static int get_env_int(const char *env_name, int default_value) {
+    const char *env = std::getenv(env_name);
+    return env == NULL ? default_value : atoi(env);
+}
+    
 
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 {
+	if (crypto != NULL) return CKR_CRYPTOKI_ALREADY_INITIALIZED;
 
-	if (CK_TRUE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_ALREADY_INITIALIZED;
-
-	pkcs11_SGX_initialized = CK_TRUE;
-
+	try {
+		crypto = new CryptoEntity();
+	}
+	catch (std::runtime_error) {
+		return CKR_DEVICE_ERROR;
+	}
+    // Set the slots, slots are simulated
+    // Should be environment variable configurable
+    nr_slots = get_env_int("PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
 	return CKR_OK;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 {
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
-
-	pkcs11_SGX_initialized = CK_FALSE;
-
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    delete(crypto);
+    crypto = NULL;
 	return CKR_OK;
 }
 
@@ -38,31 +84,96 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetInfo)(CK_INFO_PTR pInfo)
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetSlotList)(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    int i;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    if (pSlotList == NULL) {
+        *pulCount = nr_slots;
+        return CKR_OK;
+    };
+    if (*pulCount > nr_slots) return CKR_SLOT_ID_INVALID;
+    for (i=0; (CK_ULONG)i < *pulCount; i++) {
+        pSlotList[i] = (CK_SLOT_ID) i;
+    }
+	return CKR_OK;;
 }
 
+
+#define SLOT_DESCRIPTION "SGX PKCS11 Slot %lu"
+#define MANUFACTURER_ID "Intel SGX"
+
+#define SET_STRING(d, s) { \
+        memcpy(d, s, strlen(s)); \
+        memset(d + strlen(s), 0, sizeof d - strlen(s)); \
+    }
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetSlotInfo)(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (nr_slots <= slotID) return CKR_SLOT_ID_INVALID;
+    
+    char s[64] = {0};
+    sprintf(s, SLOT_DESCRIPTION, slotID);
+	SET_STRING(pInfo->slotDescription, s);
+	SET_STRING(pInfo->manufacturerID, MANUFACTURER_ID);
+    pInfo->flags = CKF_TOKEN_PRESENT;
+    pInfo->hardwareVersion.major = 0x01;
+    pInfo->hardwareVersion.minor = 0x00;
+    pInfo->firmwareVersion.major = 0x02;
+    pInfo->firmwareVersion.minor = 0x00;
+	return CKR_OK;
 }
 
+#define MAX_SESSION_COUNT 100
+#define MAX_RW_SESSION_COUNT 100
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetTokenInfo)(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    memset(pInfo, 0, sizeof *pInfo);
+    sprintf((char *)pInfo->label, "Intel SGX Token %lu", slotID);
+    pInfo->flags = CKF_RNG | CKF_TOKEN_INITIALIZED;
+    pInfo->ulMaxSessionCount = MAX_SESSION_COUNT;
+    pInfo->ulMaxRwSessionCount = MAX_RW_SESSION_COUNT;
+	return CKR_OK;;
 }
+
+CK_MECHANISM_TYPE mechanismList[] = {
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
+};
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismList)(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pMechanismList, CK_ULONG_PTR pulCount)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    CK_ULONG mechanismCount = sizeof mechanismList / sizeof *mechanismList;
+
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (nr_slots <= slotID) return CKR_SLOT_ID_INVALID;
+    
+    if (pMechanismList == NULL) {
+        *pulCount = mechanismCount;
+        return CKR_OK;
+    }
+    if (*pulCount < mechanismCount){
+        *pulCount = mechanismCount;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+    *pulCount = mechanismCount;
+    memcpy(pMechanismList, mechanismList, sizeof mechanismList);
+    return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismInfo)(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR pInfo)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    switch (type) {
+        case CKM_RSA_PKCS_KEY_PAIR_GEN:
+            pInfo->ulMinKeySize = 1024;
+            pInfo->ulMaxKeySize = 8192;
+            return CKR_OK;
+        default:
+            return CKR_MECHANISM_INVALID;
+    }
 }
 
 
@@ -74,6 +185,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_InitToken)(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin, 
 
 CK_DEFINE_FUNCTION(CK_RV, C_InitPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 	return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
@@ -83,16 +196,11 @@ CK_DEFINE_FUNCTION(CK_RV, C_SetPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR 
 	return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-
 CK_DEFINE_FUNCTION(CK_RV, C_OpenSession)(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR pApplication, CK_NOTIFY Notify, CK_SESSION_HANDLE_PTR phSession)
 {
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (CK_TRUE == pkcs11_SGX_session_opened)
-		return CKR_SESSION_COUNT;
-
-	if (PKCS11_SLOT_ID != slotID)
+	if (slotID >= nr_slots)
 		return CKR_SLOT_ID_INVALID;
 
 	if (!(flags & CKF_SERIAL_SESSION))
@@ -100,35 +208,21 @@ CK_DEFINE_FUNCTION(CK_RV, C_OpenSession)(CK_SLOT_ID slotID, CK_FLAGS flags, CK_V
 
 	if (NULL == phSession)
 		return CKR_ARGUMENTS_BAD;
-
-	try {
-		crypto = new CryptoEntity();
-	}
-	catch (std::runtime_error) {
-		return CKR_DEVICE_ERROR;
-	}
-	
-	pkcs11_SGX_session_opened = CK_TRUE;
-	pkcs11_SGX_session_state = (flags & CKF_RW_SESSION) ? CKS_RW_PUBLIC_SESSION : CKS_RO_PUBLIC_SESSION;
-	*phSession = PKCS11_SESSION_ID;
-
+    CK_FLAGS rflags = flags & CKF_RW_SESSION ? CKS_RW_PUBLIC_SESSION : CKS_RO_PUBLIC_SESSION;
+    sessions[sessionHandleCnt] = {slotID, rflags};
+    *phSession = sessionHandleCnt;
+    sessionHandleCnt++;
 	return CKR_OK;
 }
 
+
 CK_DEFINE_FUNCTION(CK_RV, C_CloseSession)(CK_SESSION_HANDLE hSession)
 {
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if ((CK_FALSE == pkcs11_SGX_session_opened) || (PKCS11_SESSION_ID != hSession))
-		return CKR_SESSION_HANDLE_INVALID;
-
-	pkcs11_SGX_session_opened = CK_FALSE;
-	pkcs11_SGX_session_state = CKS_RO_PUBLIC_SESSION;
-	pkcs11_SGX_active_operation = PKCS11_SGX_CK_OPERATION_NONE;
-
-	delete(crypto);
-
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+    sessions.erase(hSession);
 	return CKR_OK;
 }
 
@@ -222,14 +316,13 @@ CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsFinal)(CK_SESSION_HANDLE hSession)
 
 CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (PKCS11_SGX_CK_OPERATION_NONE != pkcs11_SGX_active_operation)
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_SGX_CK_OPERATION_NONE != s->operation)
 		return CKR_OPERATION_ACTIVE;
-
-	if ((CK_FALSE == pkcs11_SGX_session_opened) || (PKCS11_SESSION_ID != hSession))
-		return CKR_SESSION_HANDLE_INVALID;
 
 	if (NULL == pMechanism)
 		return CKR_ARGUMENTS_BAD;
@@ -246,7 +339,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 		return CKR_MECHANISM_INVALID;
 	}
 
-	pkcs11_SGX_active_operation = PKCS11_SGX_CK_OPERATION_ENCRYPT;
+	s->operation = PKCS11_SGX_CK_OPERATION_ENCRYPT;
 
 	CK_ATTRIBUTE extractedPublicKey = ((CK_ATTRIBUTE_PTR)(CK_ULONG)hKey)[2];
 	crypto->RSAInitEncrypt((char*)extractedPublicKey.pValue);
@@ -259,14 +352,13 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	CK_BYTE_PTR pData, CK_ULONG ulDataLen, 
 	CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen) {
 
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (PKCS11_SGX_CK_OPERATION_ENCRYPT != pkcs11_SGX_active_operation)
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_SGX_CK_OPERATION_ENCRYPT != s->operation)
 		return CKR_OPERATION_NOT_INITIALIZED;
-
-	if ((CK_FALSE == pkcs11_SGX_session_opened) || (PKCS11_SESSION_ID != hSession))
-		return CKR_SESSION_HANDLE_INVALID;
 
 	if (NULL == pData)
 		return CKR_ARGUMENTS_BAD;
@@ -278,13 +370,21 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 		return CKR_ARGUMENTS_BAD;
 
 	try {
-		*(CK_BYTE_PTR*)pEncryptedData = (CK_BYTE_PTR)crypto->RSAEncrypt((char*)pData, (int*)pulEncryptedDataLen);
+        CK_ULONG len;
+        CK_BYTE_PTR res = crypto->RSAEncrypt((const uint8_t *)pData, (size_t)ulDataLen, (size_t*)&len);
+        if (len > *pulEncryptedDataLen) {
+            free(res);
+            return CKR_ARGUMENTS_BAD;
+        }
+        memcpy(pEncryptedData, res, len);
+        *pulEncryptedDataLen = len;
+        free(res);
 	}
 	catch (std::runtime_error) {
 		return CKR_DEVICE_ERROR;
 	}
 
-	pkcs11_SGX_active_operation = PKCS11_SGX_CK_OPERATION_NONE;
+	s->operation = PKCS11_SGX_CK_OPERATION_NONE;
 
 	return CKR_OK;
 }
@@ -301,14 +401,13 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PT
 
 CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (PKCS11_SGX_CK_OPERATION_NONE != pkcs11_SGX_active_operation)
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_SGX_CK_OPERATION_NONE != s->operation)
 		return CKR_OPERATION_ACTIVE;
-
-	if ((CK_FALSE == pkcs11_SGX_session_opened) || (PKCS11_SESSION_ID != hSession))
-		return CKR_SESSION_HANDLE_INVALID;
 
 	if (NULL == pMechanism)
 		return CKR_ARGUMENTS_BAD;
@@ -327,22 +426,20 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 
 	CK_ATTRIBUTE extractedPrivateKey = ((CK_ATTRIBUTE_PTR)(CK_ULONG)hKey)[7];
 	crypto->RSAInitDecrypt((char*)extractedPrivateKey.pValue);
-	pkcs11_SGX_active_operation = PKCS11_SGX_CK_OPERATION_DECRYPT;
+	s->operation = PKCS11_SGX_CK_OPERATION_DECRYPT;
 
 	return CKR_OK;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData, CK_ULONG ulEncryptedDataLen, CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
 {
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (PKCS11_SGX_CK_OPERATION_DECRYPT != pkcs11_SGX_active_operation)
+	if (PKCS11_SGX_CK_OPERATION_DECRYPT != s->operation)
 		return CKR_OPERATION_NOT_INITIALIZED;
-
-	if ((CK_FALSE == pkcs11_SGX_session_opened) || (PKCS11_SESSION_ID != hSession))
-		return CKR_SESSION_HANDLE_INVALID;
 
 	if (NULL == pEncryptedData)
 		return CKR_ARGUMENTS_BAD;
@@ -354,14 +451,24 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 		return CKR_ARGUMENTS_BAD;
 
 	try {
-		*pulDataLen = ulEncryptedDataLen;
-		*(CK_BYTE_PTR*)pData = (CK_BYTE_PTR)crypto->RSADecrypt((char*)pEncryptedData, (int*)pulDataLen);
+        CK_ULONG resLength;
+		CK_BYTE_PTR res = crypto->RSADecrypt((const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
+        if (res == NULL) {
+            return CKR_DEVICE_ERROR;
+        }
+        if (resLength > *pulDataLen) {
+            free(res);
+            return CKR_BUFFER_TOO_SMALL;
+        }
+        memcpy(pData, res, resLength);
+        *pulDataLen = resLength;
+        free(res);
 	}
 	catch (std::runtime_error) {
 		return CKR_DEVICE_ERROR;
 	}
 
-	pkcs11_SGX_active_operation = PKCS11_SGX_CK_OPERATION_NONE;
+	s->operation = PKCS11_SGX_CK_OPERATION_NONE;
 
 	return CKR_OK;
 }
@@ -509,24 +616,25 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 	return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
+
+static int check_epmty_attr(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount){
+    CK_ULONG i;
+    for (i = 0; i < ulAttrCount; i++) {
+        if (NULL == pAttr[i].pValue || 0 >= pAttr[i].ulValueLen)
+            return 1;
+    };
+    return 0;
+}
+
 CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 	CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
 	CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
 	CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey)
 {
-	CK_ULONG i = 0;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (CK_FALSE == pkcs11_SGX_initialized)
-		return CKR_CRYPTOKI_NOT_INITIALIZED;
-
-	if ((CK_FALSE == pkcs11_SGX_session_opened) || (PKCS11_SESSION_ID != hSession))
-		return CKR_SESSION_HANDLE_INVALID;
-
-	if (NULL == pMechanism)
-		return CKR_ARGUMENTS_BAD;
-
-	if (CKM_RSA_PKCS_KEY_PAIR_GEN != pMechanism->mechanism)
-		return CKR_MECHANISM_INVALID;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
 	if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
 		return CKR_MECHANISM_PARAM_INVALID;
@@ -549,23 +657,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
 	if (NULL == phPrivateKey)
 		return CKR_ARGUMENTS_BAD;
 
-	for (i = 0; i < ulPublicKeyAttributeCount; i++)
-	{
-		if (NULL == pPublicKeyTemplate[i].pValue)
+
+    if (check_epmty_attr(pPublicKeyTemplate, ulPublicKeyAttributeCount))
 			return CKR_ATTRIBUTE_VALUE_INVALID;
 
-		if (0 >= pPublicKeyTemplate[i].ulValueLen)
+    if (check_epmty_attr(pPrivateKeyTemplate, ulPrivateKeyAttributeCount))
 			return CKR_ATTRIBUTE_VALUE_INVALID;
-	}
-
-	for (i = 0; i < ulPrivateKeyAttributeCount; i++)
-	{
-		if (NULL == pPrivateKeyTemplate[i].pValue)
-			return CKR_ATTRIBUTE_VALUE_INVALID;
-
-		if (0 >= pPrivateKeyTemplate[i].ulValueLen)
-			return CKR_ATTRIBUTE_VALUE_INVALID;
-	}
 
 	char* publicKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
 	char* privateKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
@@ -597,7 +694,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
 	privateKey[7].pValue = privateKeyChar;
 	privateKey[7].ulValueLen = strlen(privateKeyChar);
 	*phPrivateKey = (CK_ULONG)privateKey;
-
 	return CKR_OK;
 }
 

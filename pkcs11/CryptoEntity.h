@@ -7,6 +7,7 @@
 #include "crypto_engine_u.h"
 #include "shared_values.h"
 
+
 class CryptoEntity {
 private:
 #ifdef _WIN32
@@ -21,9 +22,9 @@ public:
 	CryptoEntity();
 	void RSAKeyGeneration(char* publickey, char* privateKey);
 	void RSAInitEncrypt(char* key);
-	char* RSAEncrypt(char* plainData, int* cipherLength);
+	uint8_t* RSAEncrypt(const uint8_t* plainData, size_t plainDataLength, size_t* cipherLength);
 	void RSAInitDecrypt(char* key);
-	char* RSADecrypt(char* cipherData, int* plainLength);
+	uint8_t* RSADecrypt(const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength);
 	~CryptoEntity();
 };
 

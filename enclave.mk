@@ -60,7 +60,7 @@ Enclave_Cpp_Flags := $(Enclave_C_Flags) -nostdinc++ -std=c++11
 
 Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles \
 	-L$(SGX_SSL_LIB) \
-	-Wl,--whole-archive -lsgx_tsgxssl -Wl,--no-whole-archive -lsgx_tsgxssl_crypto \
+	-Wl,--whole-archive -lsgx_pthread -lsgx_tsgxssl -Wl,--no-whole-archive -lsgx_tsgxssl_crypto \
 	-L$(SGX_LIBRARY_PATH) \
 	-Wl,--whole-archive -l$(Trts_Library_Name) -Wl,--no-whole-archive \
 	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -lsgx_tcrypto -l$(Service_Library_Name) -Wl,--end-group \

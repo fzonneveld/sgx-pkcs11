@@ -62,7 +62,8 @@ else
 	App_C_Flags += -DNDEBUG -UEDEBUG -UDEBUG
 endif
 
-App_Cpp_Flags := $(App_C_Flags) -std=c++11 -fpermissive
+App_Cpp_Flags := $(App_C_Flags) -std=c++11 -fpermissive 
+App_Cpp_Flags := $(App_C_Flags) -fpermissive 
 App_Link_Flags := $(SGX_COMMON_CFLAGS) -L$(SGX_LIBRARY_PATH) \
     -L$(OPENSSL_PATH)/lib -L$(SGX_SSL_LIB) \
     -Wl,--start-group -lcrypto -lssl -ldl -Wl,--end-group \
@@ -82,7 +83,7 @@ App_Name := App
 
 .PHONY: all
 
-all: $(App_Name)
+all: $(App_Name) pkcs11/pkcs11.so
 
 pkcs11/crypto_engine_u.c: $(SGX_EDGER8R) enclave/crypto_engine.edl
 	@cd pkcs11 && $(SGX_EDGER8R) --untrusted ../enclave/crypto_engine.edl --search-path ../enclave --search-path $(SGX_SDK)/include --search-path $(SGX_SSL)/include
@@ -95,6 +96,10 @@ pkcs11/pkcs11_module_u.o: pkcs11/crypto_engine_u.c
 pkcs11/%.o: pkcs11/%.cpp
 	@$(CXX) $(App_Cpp_Flags) -c $< -o $@
 	@echo "C++ compile  <=  $<"
+
+pkcs11/pkcs11.so: pkcs11/pkcs11_module_u.o pkcs11/CryptoEntity.o pkcs11/pkcs11.o 
+	$(CXX) -shared  -fPIC -o $@  $^ $(App_Link_Flags)
+	@echo "Created shared lib $<"
 
 $(App_Name): pkcs11/pkcs11_module_u.o $(App_Cpp_Objects)
 	@$(CXX) $^ -o $@ $(App_Link_Flags)

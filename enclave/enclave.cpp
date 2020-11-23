@@ -1,234 +1,220 @@
 #include <cstring>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdarg.h>
 
 #include "crypto_engine_t.h"
 #include "tSgxSSL_api.h"
-#include "sgx_trts.h"
+#include "sgx_urts.h"
+#include "sgx_tseal.h"
 
-#include "openssl/evp.h"
-#include "openssl/aes.h"
 #include "openssl/rsa.h"
-#include "openssl/bio.h"
 #include "openssl/pem.h"
-#include "openssl/err.h"
 #include "openssl/rand.h"
 
-#define KEY_SIZE 1680
-#define RSA_PUBLIC 437
-#define BUFFER_SIZE 300
-
-char phrase[64];
-unsigned char* digest;
-unsigned int digest_len;
-
-int aes_init(unsigned char *key_data, int key_data_len, unsigned char *salt, EVP_CIPHER_CTX *e_ctx,
-	EVP_CIPHER_CTX *d_ctx) {
-	int i, nrounds = 5;
-	unsigned char key[32], iv[32];
-
-	i = EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha1(), salt, key_data, key_data_len, nrounds, key, iv);
-	if (i != 32) {
-		return -1;
-	}
-
-	if (e_ctx != NULL) {
-		EVP_CIPHER_CTX_init(e_ctx);
-		EVP_EncryptInit_ex(e_ctx, EVP_aes_256_cbc(), NULL, key, iv);
-	}
-
-	if (d_ctx != NULL) {
-		EVP_CIPHER_CTX_init(d_ctx);
-		EVP_DecryptInit_ex(d_ctx, EVP_aes_256_cbc(), NULL, key, iv);
-	}
-
-	return 0;
-}
+static char *phrase = NULL;
 
 
-unsigned char* aes_encrypt(EVP_CIPHER_CTX *e, unsigned char *plaintext, int ilen, int *olen)
-{
-	int c_len, f_len = 0;
-	unsigned char *ciphertext = (unsigned char*)malloc(KEY_SIZE);
-	memset(ciphertext, '\0', KEY_SIZE);
-
-	EVP_EncryptInit_ex(e, NULL, NULL, NULL, NULL);
-	EVP_EncryptUpdate(e, ciphertext, &c_len, plaintext, ilen);
-	EVP_EncryptFinal_ex(e, ciphertext + c_len, &f_len);
-
-	*olen = c_len + f_len;
-	return ciphertext;
-}
-
-unsigned char* aes_decrypt(EVP_CIPHER_CTX *e, unsigned char *ciphertext, int ilen, int *olen)
-{
-	int p_len = ilen, f_len = 0;
-	unsigned char *plaintext = (unsigned char*)malloc(p_len);
-
-	EVP_DecryptInit_ex(e, NULL, NULL, NULL, NULL);
-	EVP_DecryptUpdate(e, plaintext, &p_len, ciphertext, ilen);
-	EVP_DecryptFinal_ex(e, plaintext + p_len, &f_len);
-
-	*olen = p_len + f_len;
-	return plaintext;
-}
-
-int key_digest(unsigned char *message, size_t message_len, unsigned char **digest, unsigned int *digest_len)
-{
-	EVP_MD_CTX *mdctx;
-
-	if ((mdctx = EVP_MD_CTX_create()) == NULL) {
-		EVP_MD_CTX_destroy(mdctx);
-		return -1;
-	}
-
-	if (1 != EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL)) {
-		EVP_MD_CTX_destroy(mdctx);
-		return -1;
-	}
-
-	if (1 != EVP_DigestUpdate(mdctx, message, message_len)) {
-		EVP_MD_CTX_destroy(mdctx);
-		return -1;
-	}
-
-	if ((*digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(EVP_sha256()))) == NULL) {
-		EVP_MD_CTX_destroy(mdctx);
-		return -1;
-	}
-
-	if (1 != EVP_DigestFinal_ex(mdctx, *digest, digest_len))
-		return -1;
-
-	EVP_MD_CTX_destroy(mdctx);
-
-	return 0;
-}
-
-void generateRSA(char* public_key, char* private_key) {
-	int ret = 0;
-	RSA *r = NULL;
+RSA *generateRSA(size_t bits) {
+	RSA *ret = NULL;
 	BIGNUM *bne = NULL;
-	BIO *bp_public = NULL, *bp_private = NULL;
 
-	int bits = 2048;
 	unsigned long e = RSA_F4;
 
-	bne = BN_new();
-	ret = BN_set_word(bne, e);
-	if (ret != 1) {
-		BN_free(bne);
-		return;
-	}
+	if ((bne = BN_new()) == NULL) return NULL;
+	if (BN_set_word(bne, e) != 1) goto generateRSA_err;
 
-	r = RSA_new();
-	ret = RSA_generate_key_ex(r, bits, bne, NULL);
-	if (ret != 1) {
-		RSA_free(r);
-		BN_free(bne);
-	}
-
-	bp_public = BIO_new(BIO_s_mem());
-	ret = PEM_write_bio_RSAPublicKey(bp_public, r);
-	BIO_read(bp_public, public_key, KEY_SIZE);
-
-	bp_private = BIO_new(BIO_s_mem());
-	ret = PEM_write_bio_RSAPrivateKey(bp_private, r, NULL, NULL, 0, NULL, NULL);
-	BIO_read(bp_private, private_key, KEY_SIZE);
-
-	RSA_free(r);
-	BN_free(bne);
+	if ((ret = RSA_new()) == NULL) goto generateRSA_err;
+	if ((RSA_generate_key_ex(ret, (int)bits, bne, NULL)) != 1) {
+        RSA_free(ret);
+        ret = NULL;
+    }
+generateRSA_err:
+    BN_free(bne);
+    return ret;
 }
 
 
-void generateRSAKeyPair(char* RSAPublicKey, char* RSAPrivateKey, size_t RSAKeysLength) {
+BUF_MEM *getRSAPubKey(const RSA *r){
+	BIO *bp_public;
+    BUF_MEM *ret;
 
-	char public_key[RSA_PUBLIC];
-	char private_key[KEY_SIZE];
-
-	RAND_bytes((unsigned char*)phrase, sizeof(phrase));
-
-	unsigned char *cipherKey = NULL;
-	EVP_CIPHER_CTX* e_ctx = EVP_CIPHER_CTX_new();
-
-	aes_init((unsigned char*)phrase, sizeof(phrase), NULL, e_ctx, NULL);
-
-	generateRSA(public_key, private_key);
-
-	int ilen = strlen(private_key);
-
-	key_digest((unsigned char*)private_key, ilen, &digest, &digest_len);
-
-	int olen;
-	cipherKey = aes_encrypt(e_ctx, (unsigned char*)private_key, ilen ,&olen);
-
-	strncpy(RSAPublicKey, public_key, RSA_PUBLIC);
-	memcpy((void*)RSAPrivateKey, (void*)cipherKey, olen);
-
-	EVP_CIPHER_CTX_cleanup(e_ctx);
-	free(e_ctx);
+	if ((bp_public = BIO_new(BIO_s_mem())) == NULL) return NULL;
+	if (!PEM_write_bio_RSAPublicKey(bp_public, r)) goto getRSAPubKey_err;
+    BIO_get_mem_ptr(bp_public, &ret);
+    BIO_ctrl(bp_public, BIO_CTRL_SET_CLOSE, BIO_NOCLOSE, NULL);
+getRSAPubKey_err:
+    BIO_free(bp_public);
+    return ret;
 }
 
-void SGXEncryptRSA(const char* public_key, size_t public_key_length,
-	const char* plaintext, size_t plaintext_length,
-	char* ciphertext, size_t ciphertext_length,
-	int* cipherTextLength) {
+BUF_MEM *getRSAPrivKey(const RSA *r, char *phrase){
+	BIO *bp_priv;
+    BUF_MEM *ret;
+
+	if ((bp_priv = BIO_new(BIO_s_mem())) == NULL) return NULL;
+	if (!PEM_write_bio_RSAPrivateKey(
+        bp_priv, (RSA *)r, EVP_aes_256_cbc(), NULL, 0, 0, phrase)) goto getRSAPrivKey_err;
+    BIO_get_mem_ptr(bp_priv, &ret);
+    BIO_ctrl(bp_priv, BIO_CTRL_SET_CLOSE, BIO_NOCLOSE, NULL);
+getRSAPrivKey_err:
+    BIO_free(bp_priv);
+    return ret;
+}
+
+char *generatePassPhrase(){
+    uint8_t buf[32];
+    BIO *bp_b64, *bp_phrase;
+    char *ret=NULL;
+    BUF_MEM *p;
+    // Make phrase base64 encoded, which is a string....
+    RAND_bytes(buf, sizeof buf);
+    if ((bp_b64 = BIO_new(BIO_f_base64())) == NULL) return NULL;
+    if ((bp_phrase = BIO_new(BIO_s_mem())) == NULL) goto generatePassPhrase_err0;
+    BIO_ctrl(bp_phrase, BIO_CTRL_SET_CLOSE, BIO_NOCLOSE, NULL);
+    BIO_set_flags(bp_b64, BIO_FLAGS_BASE64_NO_NL);
+    BIO_push(bp_b64, bp_phrase);
+    BIO_write(bp_b64, buf, sizeof buf);
+    BIO_ctrl(bp_b64,BIO_CTRL_FLUSH,0,NULL);
+    BIO_get_mem_ptr(bp_phrase, &p);
+    BIO_free(bp_phrase);
+    // Enforce a NULL terminated string, not clear from
+    // spec what is returned, it is without a newline but is
+    // it a zero terminated string?
+    ret = (char *) calloc(p->length + 1, 1);
+    memcpy(ret, p->data, p->length);
+    // Phrase is data contains a base64 string zero terminated.
+    // Entropy in phrase is 32 * 8 == 256 bits.
+    BUF_MEM_free(p);
+generatePassPhrase_err0:
+    BIO_free(bp_b64);
+    return ret;
+}
+
+
+int SGXgenerateRSAKeyPair(char *RSAPublicKey, char *RSAPrivateKey, size_t bufferLength, size_t nrBits) {
+    int ret = 1;
+	BUF_MEM *public_key, *private_key;
+    RSA *rsa_key;
+
+    if (phrase == NULL) {
+        phrase = generatePassPhrase();
+
+    }
+    if (phrase == NULL) goto generateRSAKeyPair_err0;
+
+	if ((rsa_key = generateRSA(nrBits)) == NULL) goto generateRSAKeyPair_err0;
+    ret = 2;
+    if ((public_key = getRSAPubKey(rsa_key)) == NULL) goto generateRSAKeyPair_err1;
+    ret = 3;
+    if ((private_key = getRSAPrivKey(rsa_key, phrase)) == NULL) goto generateRSAKeyPair_err2;
+    ret = 4;
+    if (private_key->length > bufferLength) goto generateRSAKeyPair_err3;
+    memcpy(RSAPrivateKey, private_key->data, private_key->length);
+    memcpy(RSAPublicKey, public_key->data, public_key->length);
+    ret = 0;
+generateRSAKeyPair_err3:
+    BUF_MEM_free(private_key);
+generateRSAKeyPair_err2:
+    BUF_MEM_free(public_key);
+generateRSAKeyPair_err1:
+    RSA_free(rsa_key);
+generateRSAKeyPair_err0:
+    return ret;
+}
+
+int SGXEncryptRSA(
+        const char* public_key, size_t public_key_length,
+        const uint8_t* plaintext, size_t plaintext_length,
+        uint8_t* ciphertext, size_t ciphertext_length,
+        size_t* cipherTextLength) {
 
 	int padding = RSA_PKCS1_PADDING;
+    int len;
 	BIO *bp_public = NULL;
-	RSA *rsa = RSA_new();
+    int ret = -1;
+    RSA *rsa;
 
-	bp_public = BIO_new(BIO_s_mem());
+	if ((rsa = RSA_new()) == NULL) return -1;
+
+	if ((bp_public = BIO_new(BIO_s_mem())) == NULL) goto SGXEncryptRSA_err0;
 	BIO_write(bp_public, public_key, public_key_length);
-	PEM_read_bio_RSAPublicKey(bp_public, &rsa, NULL, NULL);
+	if ((rsa = PEM_read_bio_RSAPublicKey(bp_public, &rsa, NULL, NULL)) == NULL) goto SGXEncryptRSA_err1;
 
-	int len = RSA_public_encrypt(plaintext_length, (unsigned char*)plaintext, (unsigned char*)ciphertext, rsa, padding);
+	if (( len = RSA_public_encrypt(
+            plaintext_length, (uint8_t*)plaintext, (unsigned char*)ciphertext, rsa, padding)) == -1)
+        goto SGXEncryptRSA_err1;
 	
-	*cipherTextLength = len;
-	RSA_free(rsa);
+	*cipherTextLength = (size_t)len;
+    ret = 0;
+SGXEncryptRSA_err1:
 	BIO_free(bp_public);
+SGXEncryptRSA_err0:
+    RSA_free(rsa);
+    return ret;
 }
 
-void SGXDecryptRSA(const char* private_key_ciphered, size_t private_key_ciphered_length,
-	const char* ciphertext, size_t ciphertext_length,
-	char* plaintext, size_t plaintext_length, int* plainTextLength) {
+int SGXDecryptRSA(
+        const char* private_key_ciphered, size_t private_key_ciphered_length,
+        const uint8_t* ciphertext, size_t ciphertext_length,
+        uint8_t* plaintext, size_t plaintext_length, size_t *plainTextLength) {
 
-	EVP_CIPHER_CTX *d_ctx = EVP_CIPHER_CTX_new();
-
-	aes_init((unsigned char*)phrase, sizeof(phrase), NULL, NULL, d_ctx);
-
-	int len;
-	unsigned char* decipheredKey = aes_decrypt(d_ctx, (unsigned char *)private_key_ciphered, KEY_SIZE, &len);
-
-	unsigned int digest_len;
-	unsigned char* new_digest;
-
-	key_digest((unsigned char*)decipheredKey, len, &new_digest, &digest_len);
-
-	for (uint i = 0; i < digest_len; i++) {
-		if (digest[i] != new_digest[i]) {
-			plaintext = (char*)"\0";
-			*plainTextLength = 0;
-			return;
-		}	
-	}
-
-	EVP_CIPHER_CTX_cleanup(d_ctx);
-	free(d_ctx);
-
+    uint8_t *to;
+    int ret = -1;
 	int padding = RSA_PKCS1_PADDING;
 	BIO *bp_private = NULL;
-	RSA *rsa = RSA_new();
+	RSA *rsa = NULL;
+    int to_len;
 
-	bp_private = BIO_new(BIO_s_mem());
-	BIO_write(bp_private, decipheredKey, KEY_SIZE-1);
-	PEM_read_bio_RSAPrivateKey(bp_private, &rsa, NULL, NULL);
+    if (phrase == NULL) return ret;
 
-	char buffer[BUFFER_SIZE];
-	memset(buffer, '\0', BUFFER_SIZE);
+	if ((bp_private = BIO_new(BIO_s_mem())) == NULL) return ret;
+    ret = -2;
+	if (!BIO_write(bp_private, private_key_ciphered, private_key_ciphered_length)) goto SGXDecryptRSA_err0;
+    ret = -3;
+	if ((rsa = PEM_read_bio_RSAPrivateKey(bp_private, &rsa, NULL, phrase)) == NULL) goto SGXDecryptRSA_err0;
+    ret = -4;
+    if ((to = (uint8_t *)malloc(RSA_size(rsa))) == NULL) goto SGXDecryptRSA_err1;
+    ret = -5;
+	to_len = RSA_private_decrypt(ciphertext_length, ciphertext, to, rsa, padding);
+    if (to_len == -1) goto SGXDecryptRSA_err2;
+    ret = -6;
+    if ((size_t) to_len > plaintext_length) goto SGXDecryptRSA_err2;
+    ret = -7;
+    memcpy(plaintext, to, to_len);
+    *plainTextLength = to_len;
+    ret = 0;
+SGXDecryptRSA_err2:
+    free(to);
+SGXDecryptRSA_err1:
+    RSA_free(rsa);
+SGXDecryptRSA_err0:
+    BIO_free(bp_private);
+    return ret;
+}
 
-	RSA_private_decrypt(*plainTextLength, (unsigned char*)ciphertext, (unsigned char*)buffer, rsa, padding);
 
-	strncpy(plaintext, buffer, strlen(buffer));
+int SGXGenerateRootKey(size_t *root_key_len_sealed){
+    return 0;
+}
+
+int SGXSetRootKeySealed(const uint8_t *root_key_sealed, size_t root_key_len_sealed){
+    return 0;
+}
+
+
+int SGXGetRootKeySealedLength(size_t *root_key_len_sealed){
+    *root_key_len_sealed = sizeof(sgx_sealed_data_t) + strlen(phrase) + 1;
+    return 0;
+}
+
+int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed){
+    size_t needed_size = sizeof(sgx_sealed_data_t) + strlen(phrase) + 1;
+    if (needed_size > root_key_len_sealed) return -1;
+    sgx_status_t status = sgx_seal_data(0, NULL, strlen(phrase) + 1, (const uint8_t *)phrase, needed_size, (sgx_sealed_data_t *)root_key_sealed);
+    if (status != SGX_SUCCESS) {
+        return -1;
+    };
+    return 0;
 }
