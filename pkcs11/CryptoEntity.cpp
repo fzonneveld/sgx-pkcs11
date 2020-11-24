@@ -1,3 +1,4 @@
+#include <iostream>
 #include <exception>
 #include <stdexcept>
 #include <sqlite3.h>
@@ -48,19 +49,20 @@ CryptoEntity::CryptoEntity() {
 	fclose(fp);
 }
 
-void CryptoEntity::RSAKeyGeneration(char* publicKey, char* privateKey) {
+void CryptoEntity::RSAKeyGeneration(char* publicKey, char* privateKey, size_t nrBits) {
 	sgx_status_t stat;
     int ret;
 
-	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, publicKey, privateKey, KEY_SIZE, 2048);
+	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, publicKey, privateKey, KEY_SIZE, nrBits, NULL, 0);
 	if (stat != SGX_SUCCESS)
 		throw new std::exception;
 	if (ret != 0)
 		throw new std::exception;
 }
 
-void CryptoEntity::RSAInitEncrypt(char* key) {
-	this->initializedKey = key;
+void CryptoEntity::RSAInitEncrypt(uint8_t* key, size_t length) {
+	this->initializedKey.value = key;
+	this->initializedKey.length = length;
 }
 
 #if 0
@@ -81,7 +83,7 @@ unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t p
 	unsigned char* cipherData = (unsigned char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(unsigned char));
     int retval;
 
-	ret = SGXEncryptRSA(this->enclave_id_, &retval, this->initializedKey, strlen(this->initializedKey),
+	ret = SGXEncryptRSA(this->enclave_id_, &retval, (char *)this->initializedKey.value, this->initializedKey.length,
 		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
     
 	if (ret != SGX_SUCCESS || retval != 0)
@@ -89,8 +91,9 @@ unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t p
 	return cipherData;
 }
 
-void CryptoEntity::RSAInitDecrypt(char* key) {
-	this->initializedKey = key;
+void CryptoEntity::RSAInitDecrypt(uint8_t *key, size_t length) {
+	this->initializedKey.value = key;
+	this->initializedKey.length = length;
 }
 
 
@@ -103,7 +106,7 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t* cipherData, size_t cipherDataLe
 	stat = SGXDecryptRSA(
             this->enclave_id_,
             &retval,
-			this->initializedKey, KEY_SIZE,
+			this->initializedKey.value, this->initializedKey.length,
 			cipherData, cipherDataLength,
 			plainData, max_rsa_size, plainLength);
 	if (stat != SGX_SUCCESS || retval != 0) {

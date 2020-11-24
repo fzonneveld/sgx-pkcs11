@@ -17,13 +17,16 @@ private:
 #endif
 	const char* kTokenFile = "token";
 	sgx_enclave_id_t enclave_id_;
-	char* initializedKey;
+	struct {
+		uint8_t *value;
+		size_t length;
+    } initializedKey;
 public:
 	CryptoEntity();
-	void RSAKeyGeneration(char* publickey, char* privateKey);
-	void RSAInitEncrypt(char* key);
+	void RSAKeyGeneration(char* publickey, char* privateKey, size_t nrBits);
+	void RSAInitEncrypt(uint8_t* key, size_t length);
 	uint8_t* RSAEncrypt(const uint8_t* plainData, size_t plainDataLength, size_t* cipherLength);
-	void RSAInitDecrypt(char* key);
+	void RSAInitDecrypt(uint8_t* key, size_t length);
 	uint8_t* RSADecrypt(const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength);
 	~CryptoEntity();
 };

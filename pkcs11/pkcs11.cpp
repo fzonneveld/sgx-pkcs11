@@ -1,3 +1,4 @@
+#include <iostream>
 #include <map>
 #include "pkcs11-interface.h"
 
@@ -16,10 +17,19 @@ CK_FUNCTION_LIST functionList = {
 #undef CK_PKCS11_FUNCTION_INFO
 };
 
-typedef struct session_state {
-    CK_ULONG slotID;
-    CK_ULONG sessionState;
-} session_state_t;
+CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
+{
+    *ppFunctionList = &functionList;
+    return CKR_OK;
+}
+
+typedef struct pkcs11_object {
+	CK_ULONG ulAttributeCount;
+	CK_ATTRIBUTE_PTR pAttributes;
+    uint8_t *pValue;
+    size_t valueLength;
+} pkcs11_object_t;
+
 
 typedef struct pkcs11_session {
     CK_ULONG slotID;
@@ -33,12 +43,6 @@ static CK_ULONG sessionHandleCnt = 0;
 
 static CK_ULONG nr_slots=0;
 
-CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
-{
-    *ppFunctionList = &functionList;
-    return CKR_OK;
-}
-
 static pkcs11_session_t *get_session(CK_SESSION_HANDLE handle) {
 
     // Find session handle
@@ -51,6 +55,17 @@ static int get_env_int(const char *env_name, int default_value) {
     const char *env = std::getenv(env_name);
     return env == NULL ? default_value : atoi(env);
 }
+
+
+std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount) {
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap;
+    do {
+        attrMap[pAttr->type] = pAttr;
+        pAttr++;
+    } while (--ulAttrCount != 0);
+    return attrMap;
+}
+
     
 
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
@@ -341,8 +356,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 
 	s->operation = PKCS11_SGX_CK_OPERATION_ENCRYPT;
 
-	CK_ATTRIBUTE extractedPublicKey = ((CK_ATTRIBUTE_PTR)(CK_ULONG)hKey)[2];
-	crypto->RSAInitEncrypt((char*)extractedPublicKey.pValue);
+	pkcs11_object_t *pub = (pkcs11_object_t *)hKey;
+	crypto->RSAInitEncrypt(pub->pValue, pub->valueLength);
 
 	return CKR_OK;
 }
@@ -424,8 +439,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 		return CKR_MECHANISM_INVALID;
 	}
 
-	CK_ATTRIBUTE extractedPrivateKey = ((CK_ATTRIBUTE_PTR)(CK_ULONG)hKey)[7];
-	crypto->RSAInitDecrypt((char*)extractedPrivateKey.pValue);
+	pkcs11_object_t *priv = (pkcs11_object_t *)hKey;
+	crypto->RSAInitDecrypt(priv->pValue, priv->valueLength);
 	s->operation = PKCS11_SGX_CK_OPERATION_DECRYPT;
 
 	return CKR_OK;
@@ -617,14 +632,145 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 }
 
 
-static int check_epmty_attr(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount){
-    CK_ULONG i;
-    for (i = 0; i < ulAttrCount; i++) {
-        if (NULL == pAttr[i].pValue || 0 >= pAttr[i].ulValueLen)
-            return 1;
-    };
-    return 0;
+// static int check_epmty_attr(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount){
+//     CK_ULONG i;
+//     for (i = 0; i < ulAttrCount; i++) {
+//         if (NULL == pAttr[i].pValue || 0 >= pAttr[i].ulValueLen)
+//             return 1;
+//     };
+//     return 0;
+// }
+
+CK_ATTRIBUTE_PTR getAttr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type) {
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR>::iterator it;
+    it = attrMap.find(type);
+    if (it == attrMap.end()) return NULL;
+    return it->second;
 }
+
+CK_RV matchUlAttr(CK_ATTRIBUTE *p, CK_ULONG ul) {
+    if (p) {
+        if (sizeof(CK_ULONG) != p->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (*((CK_ULONG *)p->pValue) != ul) return CKR_TEMPLATE_INCONSISTENT;
+    }
+    return CKR_OK;
+}
+
+CK_BBOOL getAttrBool(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type, CK_BBOOL defaultVale, CK_BBOOL *boolValue) {
+    CK_ATTRIBUTE *pAttr;
+    if ((pAttr = getAttr(attrMap, type)) == NULL) {
+        *boolValue = defaultVale;
+    } else {
+        if (pAttr->ulValueLen != sizeof(CK_BBOOL)) return CKR_ATTRIBUTE_VALUE_INVALID;
+        *boolValue = *((CK_BBOOL *)pAttr->pValue);
+    }
+    return CKR_OK;
+}
+    
+CK_ATTRIBUTE *map2attr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> m, CK_ULONG *pAttrLenth){
+	int i;
+	std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR>::iterator it;
+	CK_ATTRIBUTE *pRes;
+    if ((pRes = (CK_ATTRIBUTE *)malloc(sizeof *pRes * m.size())) == NULL) {
+		return NULL;
+	};
+	for (i=0, it=m.begin(); it != m.end(); it++, i++){
+		CK_ATTRIBUTE_PTR pDest = pRes + i;
+		CK_ATTRIBUTE_PTR pSrc = it->second;
+		if ((pDest->pValue = malloc(pSrc->ulValueLen)) == NULL) {
+			return NULL;
+		}
+		memcpy(pDest->pValue, pSrc->pValue, pSrc->ulValueLen);
+		pDest->ulValueLen = pSrc->ulValueLen;
+		pDest->type = pSrc->type;
+	}
+	*pAttrLenth = (CK_ULONG)i;
+	return pRes;
+}
+
+		
+CK_ATTRIBUTE_PTR attrMerge(
+		CK_ATTRIBUTE_PTR pA, CK_ULONG aLen, CK_ATTRIBUTE_PTR  pB, CK_ULONG bLen, CK_ULONG *pAttrLength) {
+	std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> a = attr2map(pA, aLen);
+	std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> b = attr2map(pB, bLen);
+
+	a.insert(b.begin(), b.end());
+	CK_ATTRIBUTE_PTR ret=map2attr(a, pAttrLength);
+	a.clear();
+	b.clear();
+	return ret;
+}
+    
+
+
+CK_RV GenerateKeyPairRSA(
+    pkcs11_session_t *session,
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> publicKeyAttrMap,
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> privateKeyAttrMap,
+	CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
+	CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
+	CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey) {
+
+	char* publicKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
+	char* privateKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
+
+    if (publicKeyAttrMap.count(CKA_MODULUS_BITS) == 0) return CKR_TEMPLATE_INCONSISTENT;
+    CK_ATTRIBUTE_PTR bitLenAttrPtr = publicKeyAttrMap[CKA_MODULUS_BITS];
+    if (sizeof(CK_ULONG) != bitLenAttrPtr->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
+    CK_ULONG bitLen = *((CK_ULONG *)bitLenAttrPtr->pValue);
+
+	try {
+		crypto->RSAKeyGeneration(publicKeyChar, privateKeyChar,(size_t) bitLen);
+	}
+	catch (std::exception e) {
+		return CKR_DEVICE_ERROR;
+	}
+    CK_RV ret = CKR_OK;
+    CK_BBOOL token;
+    if ((ret != getAttrBool(publicKeyAttrMap, CKA_TOKEN, CK_FALSE, &token)) != CKR_OK) {
+        return ret;
+    }
+    if (token) {	
+		// For now we do not store for the token
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    } else {
+		CK_BBOOL fa = CK_FALSE;
+		CK_BBOOL tr = CK_TRUE;
+		CK_KEY_TYPE keyType = CKK_RSA;
+        // Store in memory, return a pointer to allocated attributes...
+		// Public key
+		CK_OBJECT_CLASS keyClass = CKO_PUBLIC_KEY;
+		CK_ATTRIBUTE publicKeyAttribs[] = {
+			{ CKA_CLASS, &keyClass, sizeof keyClass },
+			{ CKA_TOKEN, &token, sizeof token },
+			{ CKA_PRIVATE, &fa, sizeof fa },
+			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
+			{ CKA_VALUE, publicKeyChar, strlen(publicKeyChar) },
+		};
+		pkcs11_object_t *pub = (pkcs11_object_t *)malloc(sizeof *pub);
+		pub->pAttributes = attrMerge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs, pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub->ulAttributeCount);
+		pub->pValue = (uint8_t *)publicKeyChar;
+		pub->valueLength = strlen(publicKeyChar) + 1;;
+		*phPublicKey = (CK_ULONG)pub;
+;
+		// Private key
+		keyClass = CKO_PRIVATE_KEY;
+		CK_ATTRIBUTE privateKeyAttr[] = {
+			{ CKA_CLASS, &keyClass, sizeof keyClass },
+			{ CKA_TOKEN, &token, sizeof token },
+			{ CKA_PRIVATE, &tr, sizeof tr },
+			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
+			{ CKA_VALUE, privateKeyChar, strlen(privateKeyChar) },
+		};
+		pkcs11_object_t *pro = (pkcs11_object_t *)malloc(sizeof *pro);
+		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
+		pro->pValue = (uint8_t *)privateKeyChar;
+		pro->valueLength = strlen(privateKeyChar) + 1;;
+		*phPrivateKey = (CK_ULONG)pro;
+    }
+	return ret;
+}
+
 
 CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 	CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
@@ -633,68 +779,50 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
+	if (NULL == pMechanism) return CKR_ARGUMENTS_BAD;
+	if (NULL == pPublicKeyTemplate) return CKR_ARGUMENTS_BAD;
+	if (NULL == pPrivateKeyTemplate) return CKR_ARGUMENTS_BAD;
+	if (NULL == phPublicKey) return CKR_ARGUMENTS_BAD;
+	if (NULL == phPrivateKey) return CKR_ARGUMENTS_BAD;
+
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
-		return CKR_MECHANISM_PARAM_INVALID;
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubKeyAttrMap;
+    pubKeyAttrMap = attr2map(pPublicKeyTemplate, ulPublicKeyAttributeCount);
 
-	if (NULL == pPublicKeyTemplate)
-		return CKR_ARGUMENTS_BAD;
+    CK_ATTRIBUTE_PTR pPubAttrKeyType, pPubAttrObjectClass;
+    pPubAttrObjectClass  = getAttr(pubKeyAttrMap, CKA_CLASS);
+    if ((pPubAttrKeyType  = getAttr(pubKeyAttrMap, CKA_KEY_TYPE)) == NULL) return CKR_TEMPLATE_INCONSISTENT;
 
-	if (0 >= ulPublicKeyAttributeCount)
-		return CKR_ARGUMENTS_BAD;
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> privKeyAttrMap;
+    privKeyAttrMap = attr2map(pPrivateKeyTemplate, ulPrivateKeyAttributeCount);
 
-	if (NULL == pPrivateKeyTemplate)
-		return CKR_ARGUMENTS_BAD;
+    CK_ATTRIBUTE_PTR pPrivAttrKeyType, pPrivAttrObjectClass;
+    pPrivAttrObjectClass  = getAttr(privKeyAttrMap, CKA_CLASS);
+    if ((pPrivAttrKeyType  = getAttr(privKeyAttrMap, CKA_KEY_TYPE)) == NULL) return CKR_TEMPLATE_INCONSISTENT;
 
-	if (0 >= ulPrivateKeyAttributeCount)
-		return CKR_ARGUMENTS_BAD;
+    if (pPubAttrObjectClass && pPubAttrObjectClass->type != CKO_PUBLIC_KEY) return CKR_ATTRIBUTE_VALUE_INVALID;
+    if (pPrivAttrObjectClass && pPrivAttrObjectClass->type != CKO_PRIVATE_KEY) return CKR_ATTRIBUTE_VALUE_INVALID;
 
-	if (NULL == phPublicKey)
-		return CKR_ARGUMENTS_BAD;
+    CK_RV ret = CKR_DEVICE_ERROR;
 
-	if (NULL == phPrivateKey)
-		return CKR_ARGUMENTS_BAD;
-
-
-    if (check_epmty_attr(pPublicKeyTemplate, ulPublicKeyAttributeCount))
-			return CKR_ATTRIBUTE_VALUE_INVALID;
-
-    if (check_epmty_attr(pPrivateKeyTemplate, ulPrivateKeyAttributeCount))
-			return CKR_ATTRIBUTE_VALUE_INVALID;
-
-	char* publicKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
-	char* privateKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
-
-	try {
-		crypto->RSAKeyGeneration(publicKeyChar, privateKeyChar);
-	}
-	catch (std::exception e) {
-		return CKR_DEVICE_ERROR;
-	}
-
-	CK_ATTRIBUTE_PTR publicKey = (CK_ATTRIBUTE_PTR)malloc(ulPublicKeyAttributeCount * sizeof(CK_ATTRIBUTE));
-	publicKey[0] = pPublicKeyTemplate[0];
-	publicKey[1] = pPublicKeyTemplate[1];
-	publicKey[2] = pPublicKeyTemplate[2];
-	publicKey[2].pValue = publicKeyChar;
-	publicKey[2].ulValueLen = strlen(publicKeyChar);
-	*phPublicKey = (CK_ULONG)publicKey;
-
-	CK_ATTRIBUTE_PTR privateKey = (CK_ATTRIBUTE_PTR)malloc(ulPrivateKeyAttributeCount * sizeof(CK_ATTRIBUTE));
-	privateKey[0] = pPrivateKeyTemplate[0];
-	privateKey[1] = pPrivateKeyTemplate[1];
-	privateKey[2] = pPrivateKeyTemplate[2];
-	privateKey[3] = pPrivateKeyTemplate[3];
-	privateKey[4] = pPrivateKeyTemplate[4];
-	privateKey[5] = pPrivateKeyTemplate[5];
-	privateKey[6] = pPrivateKeyTemplate[6];
-	privateKey[7] = pPrivateKeyTemplate[7];
-	privateKey[7].pValue = privateKeyChar;
-	privateKey[7].ulValueLen = strlen(privateKeyChar);
-	*phPrivateKey = (CK_ULONG)privateKey;
-	return CKR_OK;
+    switch (pMechanism->mechanism) {
+        case CKM_RSA_PKCS_KEY_PAIR_GEN:
+            if ((ret = matchUlAttr(pPubAttrKeyType, CKK_RSA)) != CKR_OK) return ret;
+            if ((ret = matchUlAttr(pPrivAttrKeyType, CKK_RSA)) != CKR_OK) return ret;
+            ret = GenerateKeyPairRSA(
+                s, pubKeyAttrMap, privKeyAttrMap,
+	            pPublicKeyTemplate, ulPublicKeyAttributeCount,
+	            pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                phPublicKey, phPrivateKey);
+			break;
+        default:
+            ret = CKR_MECHANISM_INVALID;
+    }
+    pubKeyAttrMap.clear();
+    privKeyAttrMap.clear();
+    return ret;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_WrapKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hWrappingKey, CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pWrappedKey, CK_ULONG_PTR pulWrappedKeyLen)

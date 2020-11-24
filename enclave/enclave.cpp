@@ -16,14 +16,18 @@
 static char *phrase = NULL;
 
 
-RSA *generateRSA(size_t bits) {
+RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength) {
 	RSA *ret = NULL;
 	BIGNUM *bne = NULL;
 
 	unsigned long e = RSA_F4;
 
 	if ((bne = BN_new()) == NULL) return NULL;
-	if (BN_set_word(bne, e) != 1) goto generateRSA_err;
+	if (exponent == NULL) {
+		if (BN_set_word(bne, e) != 1) goto generateRSA_err;
+	} else {
+		if (BN_bin2bn(exponent, exponentLength, bne) == NULL) goto generateRSA_err;
+	}
 
 	if ((ret = RSA_new()) == NULL) goto generateRSA_err;
 	if ((RSA_generate_key_ex(ret, (int)bits, bne, NULL)) != 1) {
@@ -93,7 +97,7 @@ generatePassPhrase_err0:
 }
 
 
-int SGXgenerateRSAKeyPair(char *RSAPublicKey, char *RSAPrivateKey, size_t bufferLength, size_t nrBits) {
+int SGXgenerateRSAKeyPair(char *RSAPublicKey, char *RSAPrivateKey, size_t bufferLength, size_t nrBits, const unsigned char *exponent, size_t exponentLength) {
     int ret = 1;
 	BUF_MEM *public_key, *private_key;
     RSA *rsa_key;
@@ -104,7 +108,7 @@ int SGXgenerateRSAKeyPair(char *RSAPublicKey, char *RSAPrivateKey, size_t buffer
     }
     if (phrase == NULL) goto generateRSAKeyPair_err0;
 
-	if ((rsa_key = generateRSA(nrBits)) == NULL) goto generateRSAKeyPair_err0;
+	if ((rsa_key = generateRSA(nrBits, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err0;
     ret = 2;
     if ((public_key = getRSAPubKey(rsa_key)) == NULL) goto generateRSAKeyPair_err1;
     ret = 3;

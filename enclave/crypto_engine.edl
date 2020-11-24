@@ -7,7 +7,9 @@ from "sgx_tsgxssl.edl" import *;
 			[out, count=bufferLength]char* RSAPublicKey,
 			[out, count=bufferLength]char* RSAPrivateKey,
 			size_t bufferLength,
-            size_t nrBits
+            size_t nrBits,
+            [in, readonly, count=exponentLength]const unsigned char *exponent,
+            size_t exponentLength
 		);
 
 		public int SGXEncryptRSA(
@@ -18,7 +20,7 @@ from "sgx_tsgxssl.edl" import *;
 		);
 
 		public int SGXDecryptRSA(
-            [in, readonly, count=private_key_ciphered_length]const char* private_key_ciphered,
+            [in, readonly, count=private_key_ciphered_length]const unsigned char* private_key_ciphered,
             size_t private_key_ciphered_length,
             [in, readonly, count=ciphertext_length]const unsigned char* ciphertext, 
             size_t ciphertext_length,
