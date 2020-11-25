@@ -367,7 +367,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	CK_BYTE_PTR pData, CK_ULONG ulDataLen, 
 	CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen) {
 
-    std::cout << __FILE__ << ":" << __LINE__<< std::endl;
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
     pkcs11_session_t *s;
@@ -390,7 +389,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
         CK_BYTE_PTR res = crypto->RSAEncrypt((const uint8_t *)pData, (size_t)ulDataLen, (size_t*)&len);
         if (len > *pulEncryptedDataLen) {
             free(res);
-    		std::cout << __FILE__ << ":" << __LINE__<< std::endl;
             return CKR_ARGUMENTS_BAD;
         }
         memcpy(pEncryptedData, res, len);
@@ -402,7 +400,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	}
 
 	s->operation = PKCS11_SGX_CK_OPERATION_NONE;
-    std::cout << __FILE__ << ":" << __LINE__<< std::endl;
 
 	return CKR_OK;
 }
