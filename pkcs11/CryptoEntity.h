@@ -23,7 +23,7 @@ private:
     } initializedKey;
 public:
 	CryptoEntity();
-	void RSAKeyGeneration(char* publickey, char* privateKey, size_t nrBits);
+	void RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **privateKey, size_t *pPrivateKeyLength, size_t nrBits);
 	void RSAInitEncrypt(uint8_t* key, size_t length);
 	uint8_t* RSAEncrypt(const uint8_t* plainData, size_t plainDataLength, size_t* cipherLength);
 	void RSAInitDecrypt(uint8_t* key, size_t length);

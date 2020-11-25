@@ -49,15 +49,26 @@ CryptoEntity::CryptoEntity() {
 	fclose(fp);
 }
 
-void CryptoEntity::RSAKeyGeneration(char* publicKey, char* privateKey, size_t nrBits) {
+void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, size_t nrBits) {
 	sgx_status_t stat;
     int ret;
 
-	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, publicKey, privateKey, KEY_SIZE, nrBits, NULL, 0);
-	if (stat != SGX_SUCCESS)
+    char *publicKey = (char *)malloc(MAX_KEY_BUFFER);	
+    char *privateKey = (char *)malloc(MAX_KEY_BUFFER);	
+	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, publicKey, privateKey, MAX_KEY_BUFFER, nrBits, NULL, 0);
+
+	if (stat != SGX_SUCCESS || ret != 0) {
+		free(publicKey);
+		free(privateKey);
 		throw new std::exception;
-	if (ret != 0)
-		throw new std::exception;
+	}
+
+	*pPublicKeyLength = strlen(publicKey) + 1;
+	*pPrivateKeyLength = strlen(privateKey) + 1;
+	publicKey = (char *)realloc(publicKey, *pPublicKeyLength);
+	privateKey = (char *)realloc(privateKey, *pPrivateKeyLength);
+	*pPublicKey = (uint8_t *)publicKey;
+	*pPrivateKey = (uint8_t *)privateKey;
 }
 
 void CryptoEntity::RSAInitEncrypt(uint8_t* key, size_t length) {

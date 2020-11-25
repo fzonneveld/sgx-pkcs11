@@ -367,6 +367,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	CK_BYTE_PTR pData, CK_ULONG ulDataLen, 
 	CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen) {
 
+    std::cout << __FILE__ << ":" << __LINE__<< std::endl;
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
     pkcs11_session_t *s;
@@ -389,6 +390,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
         CK_BYTE_PTR res = crypto->RSAEncrypt((const uint8_t *)pData, (size_t)ulDataLen, (size_t*)&len);
         if (len > *pulEncryptedDataLen) {
             free(res);
+    		std::cout << __FILE__ << ":" << __LINE__<< std::endl;
             return CKR_ARGUMENTS_BAD;
         }
         memcpy(pEncryptedData, res, len);
@@ -400,6 +402,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	}
 
 	s->operation = PKCS11_SGX_CK_OPERATION_NONE;
+    std::cout << __FILE__ << ":" << __LINE__<< std::endl;
 
 	return CKR_OK;
 }
@@ -711,16 +714,19 @@ CK_RV GenerateKeyPairRSA(
 	CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
 	CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey) {
 
-	char* publicKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
-	char* privateKeyChar = (char*)malloc(KEY_SIZE * sizeof(char));
-
     if (publicKeyAttrMap.count(CKA_MODULUS_BITS) == 0) return CKR_TEMPLATE_INCONSISTENT;
     CK_ATTRIBUTE_PTR bitLenAttrPtr = publicKeyAttrMap[CKA_MODULUS_BITS];
     if (sizeof(CK_ULONG) != bitLenAttrPtr->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
     CK_ULONG bitLen = *((CK_ULONG *)bitLenAttrPtr->pValue);
 
+	uint8_t* publicKey;
+	size_t publicKeyLength;
+	uint8_t* privateKey;
+	size_t privateKeyLength;
+
 	try {
-		crypto->RSAKeyGeneration(publicKeyChar, privateKeyChar,(size_t) bitLen);
+		crypto->RSAKeyGeneration(
+			&publicKey, &publicKeyLength, &privateKey, &privateKeyLength, (size_t) bitLen);
 	}
 	catch (std::exception e) {
 		return CKR_DEVICE_ERROR;
@@ -745,12 +751,11 @@ CK_RV GenerateKeyPairRSA(
 			{ CKA_TOKEN, &token, sizeof token },
 			{ CKA_PRIVATE, &fa, sizeof fa },
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
-			{ CKA_VALUE, publicKeyChar, strlen(publicKeyChar) },
 		};
 		pkcs11_object_t *pub = (pkcs11_object_t *)malloc(sizeof *pub);
 		pub->pAttributes = attrMerge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs, pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub->ulAttributeCount);
-		pub->pValue = (uint8_t *)publicKeyChar;
-		pub->valueLength = strlen(publicKeyChar) + 1;;
+		pub->pValue = publicKey;
+		pub->valueLength = publicKeyLength;
 		*phPublicKey = (CK_ULONG)pub;
 ;
 		// Private key
@@ -760,12 +765,11 @@ CK_RV GenerateKeyPairRSA(
 			{ CKA_TOKEN, &token, sizeof token },
 			{ CKA_PRIVATE, &tr, sizeof tr },
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
-			{ CKA_VALUE, privateKeyChar, strlen(privateKeyChar) },
 		};
 		pkcs11_object_t *pro = (pkcs11_object_t *)malloc(sizeof *pro);
 		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
-		pro->pValue = (uint8_t *)privateKeyChar;
-		pro->valueLength = strlen(privateKeyChar) + 1;;
+		pro->pValue = privateKey;
+		pro->valueLength = privateKeyLength;
 		*phPrivateKey = (CK_ULONG)pro;
     }
 	return ret;
