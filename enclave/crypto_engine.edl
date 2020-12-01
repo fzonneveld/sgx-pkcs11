@@ -28,18 +28,24 @@ from "sgx_tsgxssl.edl" import *;
             size_t plaintext_length,
             [user_check]size_t* plainTextLength
 		);
-
+        
         // Root Key Handling functions....
-        public int SGXSetRootKeySealed(
-            [in, readonly, count=root_key_len_sealed]const unsigned char *root_key_sealed,
-            size_t root_key_len_sealed
+        public int SGXGenerateRootKey(
+            [out, count=root_key_length] uint8_t *rootkeySealed,
+            size_t root_key_length,
+            [user_check]size_t* rootKeyLength
         );
-        public int SGXGetRootKeySealedLength(
-            [user_check]size_t* root_key_len_sealed
+
+        public size_t SGXGetSealedRootKeySize();
+
+        public int SGXSetRootKeySealed(
+            [in, readonly, count=root_key_len_sealed]const uint8_t *root_key_sealed,
+            size_t root_key_len_sealed
         );
         public int SGXGetRootKeySealed(
-            [out, count=root_key_len_sealed]unsigned char *root_key_sealed,
-            size_t root_key_len_sealed
+            [out, count=root_key_len_sealed]uint8_t *root_key_sealed,
+            size_t root_key_len_sealed,
+            [user_check]size_t* rootKeyLenSealed
         );
     };
 

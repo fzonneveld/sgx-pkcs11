@@ -1,10 +1,13 @@
+#include <sstream>
 #include <iostream>
 #include <map>
+#include <sys/stat.h>
 #include "pkcs11-interface.h"
 
 
 CK_SLOT_ID PKCS11_SLOT_ID = 1;
 CK_SESSION_HANDLE PKCS11_SESSION_ID = 1;
+#define DEFAULT_NR_SLOTS 10
 
 CK_ULONG pkcs11_SGX_session_state = CKS_RO_PUBLIC_SESSION;
 CryptoEntity *crypto=NULL;
@@ -51,10 +54,22 @@ static pkcs11_session_t *get_session(CK_SESSION_HANDLE handle) {
     return iter != sessions.end() ? &iter->second : NULL;
 }
 
-static int get_env_int(const char *env_name, int default_value) {
-    const char *env = std::getenv(env_name);
-    return env == NULL ? default_value : atoi(env);
+template <typename T>
+T GetEnv(const char *env_name, T default_value){
+    char *env = getenv(env_name);
+    if (env == NULL)
+        return default_value;
+    std::string str(env);
+    std::istringstream ss(str);
+    T ret;
+    ss >> ret;
+    return ret;
 }
+
+// static int get_env_int(const char *env_name, int default_value) {
+//     const char *env = std::getenv(env_name);
+//     return env == NULL ? default_value : atoi(env);
+// }
 
 
 std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount) {
@@ -70,7 +85,8 @@ std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, C
 
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 {
-	if (crypto != NULL) return CKR_CRYPTOKI_ALREADY_INITIALIZED;
+	if (crypto != NULL)
+        return CKR_CRYPTOKI_ALREADY_INITIALIZED;
 
 	try {
 		crypto = new CryptoEntity();
@@ -80,7 +96,34 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 	}
     // Set the slots, slots are simulated
     // Should be environment variable configurable
-    nr_slots = get_env_int("PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
+    nr_slots = GetEnv<int>((const char *)"PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
+    const char *rootKeyFileName = GetEnv<std::string>("PKCS11_ROOT_KEY_FILE", DEFAULT_ROOT_KEY_FILE).c_str();
+    struct stat st;
+    if (!stat(rootKeyFileName, &st)) {
+        FILE *f;
+        if ((f = fopen(rootKeyFileName, "r")) == NULL) {
+            return CKR_DEVICE_ERROR;
+        }
+        uint8_t *rootKey=(uint8_t *)alloca(st.st_size);
+        if (1 != fread(rootKey, st.st_size, 1, f)){ 
+            return CKR_DEVICE_ERROR;
+        }
+        if (crypto->RestoreRootKey(rootKey, (size_t)st.st_size)) {
+            return CKR_DEVICE_ERROR;
+        }
+
+    } else {
+        FILE *f;
+        if ((f = fopen(rootKeyFileName, "w+")) == NULL) {
+            printf("Error in open file\n");
+            return CKR_DEVICE_ERROR;
+        }
+        size_t rootKeyLength = crypto->GetSealedRootKeySize();
+        uint8_t *rootKey = alloca(rootKeyLength);
+        crypto->GenerateRootKey(rootKey, &rootKeyLength);
+        fwrite(rootKey, rootKeyLength, 1, f);
+        fclose(f);
+    }
 	return CKR_OK;
 }
 
@@ -208,6 +251,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_InitPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR
 
 CK_DEFINE_FUNCTION(CK_RV, C_SetPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin, CK_ULONG ulOldLen, CK_UTF8CHAR_PTR pNewPin, CK_ULONG ulNewLen)
 {
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 	return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
@@ -267,7 +312,19 @@ CK_DEFINE_FUNCTION(CK_RV, C_SetOperationState)(CK_SESSION_HANDLE hSession, CK_BY
 
 CK_DEFINE_FUNCTION(CK_RV, C_Login)(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+    // Do not require any PIN
+    switch (userType) {
+        case CKU_SO:
+            break;
+        case CKU_USER:
+            break;
+        default:
+            return CKR_USER_TYPE_INVALID;
+    }
+	return CKR_OK;
 }
 
 

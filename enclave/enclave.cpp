@@ -15,6 +15,7 @@
 
 static char *phrase = NULL;
 
+static uint8_t rootKey[32];
 
 RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength) {
 	RSA *ret = NULL;
@@ -160,9 +161,13 @@ SGXEncryptRSA_err0:
 }
 
 int SGXDecryptRSA(
-        const char* private_key_ciphered, size_t private_key_ciphered_length,
-        const uint8_t* ciphertext, size_t ciphertext_length,
-        uint8_t* plaintext, size_t plaintext_length, size_t *plainTextLength) {
+        const uint8_t *private_key_ciphered,
+        size_t private_key_ciphered_length,
+        const uint8_t* ciphertext,
+        size_t ciphertext_length,
+        uint8_t* plaintext,
+        size_t plaintext_length,
+        size_t *plainTextLength) {
 
     uint8_t *to;
     int ret = -1;
@@ -198,27 +203,49 @@ SGXDecryptRSA_err0:
     return ret;
 }
 
+size_t SGXGetSealedRootKeySize(){
+    return sizeof(sgx_sealed_data_t) + sizeof rootKey;
+}
 
-int SGXGenerateRootKey(size_t *root_key_len_sealed){
+int SGXGenerateRootKey(uint8_t *rootKeySealed, size_t root_key_length, size_t *rootKeyLength){
+    uint32_t sealedSize;
+	sgx_status_t stat;
+    if (!RAND_bytes(rootKey, sizeof rootKey)) {
+        return -1;
+    }
+    if ((sealedSize = sgx_calc_sealed_data_size(0, sizeof rootKey)) == UINT32_MAX)
+        return -1;
+    if (sealedSize > root_key_length)
+        return -1;
+    if ((SGX_SUCCESS != (stat = sgx_seal_data(
+            0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, root_key_length, (sgx_sealed_data_t *)rootKeySealed)))) 
+        return -1;
     return 0;
 }
+
+int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed, size_t *rootKeyLenSealed){
+	sgx_status_t stat;
+
+    *rootKeyLenSealed = SGXGetSealedRootKeySize();
+    if (*rootKeyLenSealed > root_key_len_sealed) {
+        return -1;
+    }
+    if ((SGX_SUCCESS != (stat = sgx_seal_data(
+            0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, sizeof rootKey, (sgx_sealed_data_t *)root_key_sealed)))) 
+        return -1;
+    return 0;
+}
+
 
 int SGXSetRootKeySealed(const uint8_t *root_key_sealed, size_t root_key_len_sealed){
-    return 0;
-}
+    uint32_t decrypted_text_length = sizeof rootKey;
+	sgx_status_t stat;
 
-
-int SGXGetRootKeySealedLength(size_t *root_key_len_sealed){
-    *root_key_len_sealed = sizeof(sgx_sealed_data_t) + strlen(phrase) + 1;
-    return 0;
-}
-
-int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed){
-    size_t needed_size = sizeof(sgx_sealed_data_t) + strlen(phrase) + 1;
-    if (needed_size > root_key_len_sealed) return -1;
-    sgx_status_t status = sgx_seal_data(0, NULL, strlen(phrase) + 1, (const uint8_t *)phrase, needed_size, (sgx_sealed_data_t *)root_key_sealed);
-    if (status != SGX_SUCCESS) {
+    if ((SGX_SUCCESS != (stat = sgx_unseal_data(
+            (const sgx_sealed_data_t *)root_key_sealed,
+            NULL, NULL,
+            rootKey, &decrypted_text_length))))
         return -1;
-    };
     return 0;
 }
+

@@ -7,4 +7,5 @@
 #define MAX_RSA_SIZE 245
 
 #define DEFAULT_NR_SLOTS 10
+#define DEFAULT_ROOT_KEY_FILE ".rootkey"
 #define DEFAULT_MAX_SESSIONS 10
