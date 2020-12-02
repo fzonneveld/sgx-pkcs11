@@ -13,9 +13,21 @@
 #include "openssl/pem.h"
 #include "openssl/rand.h"
 
-static char *phrase = NULL;
+#define CK_PTR *
+#define CK_DEFINE_FUNCTION(returnType, name) returnType name
+#define CK_DECLARE_FUNCTION(returnType, name) returnType name
+#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+#define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
 
-static uint8_t rootKey[32];
+#ifndef NULL_PTR
+#define NULL_PTR 0
+#endif
+
+#include "../cryptoki/pkcs11.h"
+
+#define ROOTKEY_LENGTH 32
+static char rootKey_b64[(4 *((ROOTKEY_LENGTH + 2) / 3)) + 1];
+static CK_BBOOL rootKeySet = CK_FALSE;
 
 RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength) {
 	RSA *ret = NULL;
@@ -73,7 +85,7 @@ char *generatePassPhrase(){
     BIO *bp_b64, *bp_phrase;
     char *ret=NULL;
     BUF_MEM *p;
-    // Make phrase base64 encoded, which is a string....
+
     RAND_bytes(buf, sizeof buf);
     if ((bp_b64 = BIO_new(BIO_f_base64())) == NULL) return NULL;
     if ((bp_phrase = BIO_new(BIO_s_mem())) == NULL) goto generatePassPhrase_err0;
@@ -103,17 +115,14 @@ int SGXgenerateRSAKeyPair(char *RSAPublicKey, char *RSAPrivateKey, size_t buffer
 	BUF_MEM *public_key, *private_key;
     RSA *rsa_key;
 
-    if (phrase == NULL) {
-        phrase = generatePassPhrase();
-
-    }
-    if (phrase == NULL) goto generateRSAKeyPair_err0;
+    
+    if (rootKeySet == CK_FALSE) return ret;
 
 	if ((rsa_key = generateRSA(nrBits, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err0;
     ret = 2;
     if ((public_key = getRSAPubKey(rsa_key)) == NULL) goto generateRSAKeyPair_err1;
     ret = 3;
-    if ((private_key = getRSAPrivKey(rsa_key, phrase)) == NULL) goto generateRSAKeyPair_err2;
+    if ((private_key = getRSAPrivKey(rsa_key, rootKey_b64)) == NULL) goto generateRSAKeyPair_err2;
     ret = 4;
     if (private_key->length > bufferLength) goto generateRSAKeyPair_err3;
     memcpy(RSAPrivateKey, private_key->data, private_key->length);
@@ -176,13 +185,13 @@ int SGXDecryptRSA(
 	RSA *rsa = NULL;
     int to_len;
 
-    if (phrase == NULL) return ret;
+    if (rootKeySet == CK_FALSE) return ret;
 
 	if ((bp_private = BIO_new(BIO_s_mem())) == NULL) return ret;
     ret = -2;
 	if (!BIO_write(bp_private, private_key_ciphered, private_key_ciphered_length)) goto SGXDecryptRSA_err0;
     ret = -3;
-	if ((rsa = PEM_read_bio_RSAPrivateKey(bp_private, &rsa, NULL, phrase)) == NULL) goto SGXDecryptRSA_err0;
+	if ((rsa = PEM_read_bio_RSAPrivateKey(bp_private, &rsa, NULL, rootKey_b64)) == NULL) goto SGXDecryptRSA_err0;
     ret = -4;
     if ((to = (uint8_t *)malloc(RSA_size(rsa))) == NULL) goto SGXDecryptRSA_err1;
     ret = -5;
@@ -204,12 +213,14 @@ SGXDecryptRSA_err0:
 }
 
 size_t SGXGetSealedRootKeySize(){
-    return sizeof(sgx_sealed_data_t) + sizeof rootKey;
+    return sizeof(sgx_sealed_data_t) + ROOTKEY_LENGTH;
 }
 
 int SGXGenerateRootKey(uint8_t *rootKeySealed, size_t root_key_length, size_t *rootKeyLength){
     uint32_t sealedSize;
+    uint8_t rootKey[ROOTKEY_LENGTH];
 	sgx_status_t stat;
+    rootKeySet = CK_FALSE;
     if (!RAND_bytes(rootKey, sizeof rootKey)) {
         return -1;
     }
@@ -220,11 +231,16 @@ int SGXGenerateRootKey(uint8_t *rootKeySealed, size_t root_key_length, size_t *r
     if ((SGX_SUCCESS != (stat = sgx_seal_data(
             0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, root_key_length, (sgx_sealed_data_t *)rootKeySealed)))) 
         return -1;
+    if ((sizeof(rootKey_b64) + 1) != EVP_EncodeBlock((uint8_t *)rootKey_b64, rootKey, ROOTKEY_LENGTH)) {
+        return -1;
+    }
+    rootKeySet = CK_TRUE;
     return 0;
 }
 
 int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed, size_t *rootKeyLenSealed){
 	sgx_status_t stat;
+    static uint8_t rootKey[ROOTKEY_LENGTH];
 
     *rootKeyLenSealed = SGXGetSealedRootKeySize();
     if (*rootKeyLenSealed > root_key_len_sealed) {
@@ -238,14 +254,20 @@ int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed, si
 
 
 int SGXSetRootKeySealed(const uint8_t *root_key_sealed, size_t root_key_len_sealed){
+    static uint8_t rootKey[ROOTKEY_LENGTH];
     uint32_t decrypted_text_length = sizeof rootKey;
 	sgx_status_t stat;
 
+    rootKeySet = CK_FALSE;
     if ((SGX_SUCCESS != (stat = sgx_unseal_data(
             (const sgx_sealed_data_t *)root_key_sealed,
             NULL, NULL,
             rootKey, &decrypted_text_length))))
         return -1;
+    if ((sizeof(rootKey_b64) - 1) != EVP_EncodeBlock((uint8_t *)rootKey_b64, rootKey, ROOTKEY_LENGTH)) {
+        return -1;
+    }
+    rootKeySet = CK_TRUE;
     return 0;
 }
 

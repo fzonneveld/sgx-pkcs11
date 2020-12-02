@@ -88,6 +88,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 	if (crypto != NULL)
         return CKR_CRYPTOKI_ALREADY_INITIALIZED;
 
+    std::cout << "Inializing...." << std::endl;
+
 	try {
 		crypto = new CryptoEntity();
 	}
@@ -108,19 +110,29 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
         if (1 != fread(rootKey, st.st_size, 1, f)){ 
             return CKR_DEVICE_ERROR;
         }
-        if (crypto->RestoreRootKey(rootKey, (size_t)st.st_size)) {
+        try {
+            if (crypto->RestoreRootKey(rootKey, (size_t)st.st_size))
+                return CKR_DEVICE_ERROR;
+        }
+        catch (std::runtime_error) {
             return CKR_DEVICE_ERROR;
         }
-
     } else {
+        std::cout << __FILE__ << ":" << __LINE__ << std::endl;
         FILE *f;
         if ((f = fopen(rootKeyFileName, "w+")) == NULL) {
             printf("Error in open file\n");
             return CKR_DEVICE_ERROR;
         }
+        std::cout << __FILE__ << ":" << __LINE__ << std::endl;
         size_t rootKeyLength = crypto->GetSealedRootKeySize();
         uint8_t *rootKey = alloca(rootKeyLength);
-        crypto->GenerateRootKey(rootKey, &rootKeyLength);
+        try {
+            crypto->GenerateRootKey(rootKey, &rootKeyLength);
+        }
+        catch (std::runtime_error) {
+            return CKR_DEVICE_ERROR;
+        }
         fwrite(rootKey, rootKeyLength, 1, f);
         fclose(f);
     }

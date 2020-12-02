@@ -31,7 +31,6 @@ CryptoEntity::CryptoEntity() {
 	// Step 2: call sgx_create_enclave to initialize an enclave instance
 	ret = sgx_create_enclave(this->kEnclaveFile, SGX_DEBUG_FLAG, &launch_token, &updated, &this->enclave_id_, NULL);
 	if (ret != SGX_SUCCESS) {
-        printf("%s:%i\n", __FILE__, __LINE__);
 		throw std::runtime_error("Failed to create enclave.");
 	}
 
@@ -133,7 +132,6 @@ size_t CryptoEntity::GetSealedRootKeySize() {
 	if (stat != SGX_SUCCESS) {
 		throw std::runtime_error("Getting root key size failed failed\n");
     }
-
     return retval;
 }
 
@@ -142,18 +140,10 @@ int CryptoEntity::GenerateRootKey(uint8_t *rootKeySealed, size_t *rootKeySealedL
     int retval;
     size_t sealedRootKeySize;
 	stat = SGXGetSealedRootKeySize(this->enclave_id_, &sealedRootKeySize);
-	if (stat != SGX_SUCCESS) {
-		throw std::runtime_error("Generate rootkey\n");
-    }
-    if (sealedRootKeySize > *rootKeySealedLength) {
-		throw std::runtime_error("Generate rootkey\n");
-    }
+	if (stat != SGX_SUCCESS) return 1;
+    if (sealedRootKeySize > *rootKeySealedLength) return 2;
 	stat = SGXGenerateRootKey(this->enclave_id_, &retval, rootKeySealed, sealedRootKeySize, rootKeySealedLength);
-	if (stat != SGX_SUCCESS || retval != 0) {
-        printf("Error=%i\n", retval);
-		throw std::runtime_error("Generate rootkey failed \n");
-    }
-
+	if (stat != SGX_SUCCESS || retval != 0) return 3;
     return 0;
 }
 
@@ -161,9 +151,7 @@ int CryptoEntity::RestoreRootKey(uint8_t *rootKeySealed, size_t rootKeySealedLen
 	sgx_status_t stat;
     int retval;
 	stat = SGXSetRootKeySealed(this->enclave_id_, &retval, rootKeySealed, rootKeySealedLength);
-	if (stat != SGX_SUCCESS || retval !=-0) {
-		throw std::runtime_error("Generate rootkey\n");
-    }
+	if (stat != SGX_SUCCESS || retval !=-0) return 1;
     return 0;
 }
 
