@@ -84,6 +84,7 @@ void printhex(const char *s, unsigned char *buf, unsigned long length){
 
 map<int, string> c_mechanisms = {
     {CKM_RSA_PKCS_KEY_PAIR_GEN, "CKM_RSA_PKCS_KEY_PAIR_GEN"},
+    {CKM_RSA_PKCS, "CKM_RSA_PKCS"},
 };
 
 #define USAGE {cout << "Usage: [-v] " << argv[0] << " <pkcs11 lib>" << endl;}
@@ -106,7 +107,6 @@ int main(int argc, char *argv[]) {
         }
     }
     int nr_args = argc - optind;
-    cout << argc << " " << optind << endl;
     if (nr_args != 1 && nr_args != 2) {
         USAGE;
         return 1;
@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
     rc = pFunc(&funcs);
 
     if (rc != CKR_OK) {
-        fprintf(stderr, "COuld not get function list\n");
+        fprintf(stderr, "Could not get function list\n");
         return 1;
     }
     PKCS11_CALL(C_Initialize, NULL);
@@ -149,7 +149,7 @@ int main(int argc, char *argv[]) {
     for (int i=0;i<(int)pulCount;i++) {
         map<int, string>::const_iterator iter = c_mechanisms.find(pMechanismList[i]);
         if (iter != c_mechanisms.end()) {
-            cout << "\t" << iter->second << "[0x" << setfill('0') << setw(8) << pMechanismList[i] << "]\n";
+            cout << "\t" << "[0x" << setfill('0') << setw(8) << pMechanismList[i] << "]" << iter->second << "\n";
         }
     }
     PKCS11_CALL(C_OpenSession, slots[0], CKF_SERIAL_SESSION, (CK_VOID_PTR) NULL, NULL, &session);

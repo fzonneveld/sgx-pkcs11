@@ -4,19 +4,22 @@ from "sgx_tsgxssl.edl" import *;
 
 	trusted {
 		public int SGXgenerateRSAKeyPair(
-			[out, count=bufferLength]char* RSAPublicKey,
-			[out, count=bufferLength]char* RSAPrivateKey,
-			size_t bufferLength,
-            size_t nrBits,
+			[out, count=publicKeyLength]uint8_t* RSAPublicKey,
+            size_t publicKeyLength,
+            [user_check]size_t *publicKeyLengthOut,
+			[out, count=privateKeyLength]uint8_t* RSAPrivateKey,
+            size_t privateKeyLength,
+			[user_check]size_t *privateKeyLengthOut,
             [in, readonly, count=exponentLength]const unsigned char *exponent,
-            size_t exponentLength
+            size_t exponentLength,
+            size_t bitLen
 		);
 
 		public int SGXEncryptRSA(
-            [in, readonly, count=public_key_length]const char* public_key, size_t public_key_length,
-            [in, readonly, count=plaintext_length]const unsigned char* plaintext, size_t plaintext_length,
-            [out, count=ciphertext_length]unsigned char* ciphertext, size_t ciphertext_length,
-            [out, count=1]size_t* cipherTextLength
+            [in, readonly, count=public_key_length]const uint8_t* public_key, size_t public_key_length,
+            [in, readonly, count=plaintext_length]const uint8_t* plaintext, size_t plaintext_length,
+            [out, count=ciphertext_length]uint8_t* ciphertext, size_t ciphertext_length,
+            [user_check]size_t* cipherTextLength
 		);
 
 		public int SGXDecryptRSA(

@@ -1,8 +1,13 @@
 #include <sstream>
 #include <iostream>
 #include <map>
+#include <sys/types.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "pkcs11-interface.h"
+#include <sqlite3.h>
+
+#include "attribute.h"
 
 
 CK_SLOT_ID PKCS11_SLOT_ID = 1;
@@ -11,6 +16,7 @@ CK_SESSION_HANDLE PKCS11_SESSION_ID = 1;
 
 CK_ULONG pkcs11_SGX_session_state = CKS_RO_PUBLIC_SESSION;
 CryptoEntity *crypto=NULL;
+sqlite3 *db=NULL;
 
 
 CK_FUNCTION_LIST functionList = {
@@ -66,21 +72,25 @@ T GetEnv(const char *env_name, T default_value){
     return ret;
 }
 
+
 // static int get_env_int(const char *env_name, int default_value) {
 //     const char *env = std::getenv(env_name);
 //     return env == NULL ? default_value : atoi(env);
 // }
 
 
-std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount) {
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap;
-    do {
-        attrMap[pAttr->type] = pAttr;
-        pAttr++;
-    } while (--ulAttrCount != 0);
-    return attrMap;
-}
+// std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount) {
+//     std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap;
+//     do {
+//         attrMap[pAttr->type] = pAttr;
+//         pAttr++;
+//     } while (--ulAttrCount != 0);
+//     return attrMap;
+// }
 
+
+const char *defaultRootkeyFile = DEFAULT_ROOT_KEY_FILE;
+const char defaultDBfileName[] = DEFAULT_DB_NAME;
     
 
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
@@ -99,32 +109,15 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
     // Set the slots, slots are simulated
     // Should be environment variable configurable
     nr_slots = GetEnv<int>((const char *)"PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
-    const char *rootKeyFileName = GetEnv<std::string>("PKCS11_ROOT_KEY_FILE", DEFAULT_ROOT_KEY_FILE).c_str();
-    struct stat st;
-    if (!stat(rootKeyFileName, &st)) {
-        FILE *f;
-        if ((f = fopen(rootKeyFileName, "r")) == NULL) {
-            return CKR_DEVICE_ERROR;
-        }
-        uint8_t *rootKey=(uint8_t *)alloca(st.st_size);
-        if (1 != fread(rootKey, st.st_size, 1, f)){ 
-            return CKR_DEVICE_ERROR;
-        }
-        try {
-            if (crypto->RestoreRootKey(rootKey, (size_t)st.st_size))
-                return CKR_DEVICE_ERROR;
-        }
-        catch (std::runtime_error) {
-            return CKR_DEVICE_ERROR;
-        }
-    } else {
-        std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-        FILE *f;
+    const char *rootKeyFileName = GetEnv<std::string>(
+        "PKCS11_ROOT_KEY_FILE", defaultRootkeyFile).c_str();
+    FILE *f;
+    if ((f = fopen(rootKeyFileName, "r")) == NULL) {
+        printf("Creating %s\n", rootKeyFileName);
         if ((f = fopen(rootKeyFileName, "w+")) == NULL) {
             printf("Error in open file\n");
             return CKR_DEVICE_ERROR;
         }
-        std::cout << __FILE__ << ":" << __LINE__ << std::endl;
         size_t rootKeyLength = crypto->GetSealedRootKeySize();
         uint8_t *rootKey = alloca(rootKeyLength);
         try {
@@ -135,6 +128,56 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
         }
         fwrite(rootKey, rootKeyLength, 1, f);
         fclose(f);
+    } else {
+        printf("Restoring '%s'\n", rootKeyFileName);
+        struct stat st;
+        if (fstat(fileno(f), &st) < 0) {
+            perror("Error :");
+            return CKR_DEVICE_ERROR;
+        }
+        uint8_t *rootKey=(uint8_t *)alloca(st.st_size);
+        if (1 != fread(rootKey, st.st_size, 1, f)){ 
+            return CKR_DEVICE_ERROR;
+        }
+        fclose(f);
+        try {
+            if (crypto->RestoreRootKey(rootKey, (size_t)st.st_size)) {
+                return CKR_DEVICE_ERROR;
+            }
+        }
+        catch (std::runtime_error) {
+            return CKR_DEVICE_ERROR;
+        }
+    }
+    printf("Opening DB\n");
+    const char *dbFileName = GetEnv<std::string>((const char *)"PKCS_DB_NAME", DEFAULT_DB_NAME).c_str();
+    struct stat st;
+    if (stat(dbFileName, &st) < 0) {
+        char *err_msg = NULL;
+        printf("Creating new database: %s\n", dbFileName);
+        if (SQLITE_OK != sqlite3_open(dbFileName, &db)) {
+            printf("Cannot open DB=%s\n", dbFileName);
+            return CKR_DEVICE_ERROR;
+        }
+        const char *create_sql = \
+            "CREATE TABLE Atribute(attributeId INTEGER, attributeType INTEGER, value BLOB);"
+            "CREATE TABLE Object(objectId INTEGER, objectClass INTEGER, value BLOB);"
+            "CREATE TABLE ObjectAttr("
+                "objectId INTEGER REFERENCES Object(ObjectId),"
+                "attributeId INTEGER REFERENCES Attribute(attributeId)"
+            ");" ;
+        if (SQLITE_OK != sqlite3_exec(db, create_sql, 0, 0, &err_msg)) {
+            fprintf(stderr, "SQL error: %s\n", err_msg);
+            sqlite3_free(err_msg);
+            printf("Creating new database\n");
+            return CKR_DEVICE_ERROR;
+        }
+    } else {
+        printf("Using old database %s\n", defaultDBfileName);
+        if (SQLITE_OK != sqlite3_open(defaultDBfileName, &db)) {
+            printf("Cannot open DB=%s\n", defaultDBfileName);
+            printf("Creating new database\n");
+        }
     }
 	return CKR_OK;
 }
@@ -142,6 +185,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 CK_DEFINE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    sqlite3_close(db);
     delete(crypto);
     crypto = NULL;
 	return CKR_OK;
@@ -210,6 +254,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetTokenInfo)(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR p
 
 CK_MECHANISM_TYPE mechanismList[] = {
     CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_RSA_PKCS,
 };
 
 
@@ -710,67 +755,15 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 //     return 0;
 // }
 
-CK_ATTRIBUTE_PTR getAttr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type) {
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR>::iterator it;
-    it = attrMap.find(type);
-    if (it == attrMap.end()) return NULL;
-    return it->second;
-}
-
-CK_RV matchUlAttr(CK_ATTRIBUTE *p, CK_ULONG ul) {
-    if (p) {
-        if (sizeof(CK_ULONG) != p->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
-        if (*((CK_ULONG *)p->pValue) != ul) return CKR_TEMPLATE_INCONSISTENT;
-    }
-    return CKR_OK;
-}
-
-CK_BBOOL getAttrBool(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type, CK_BBOOL defaultVale, CK_BBOOL *boolValue) {
-    CK_ATTRIBUTE *pAttr;
-    if ((pAttr = getAttr(attrMap, type)) == NULL) {
-        *boolValue = defaultVale;
-    } else {
-        if (pAttr->ulValueLen != sizeof(CK_BBOOL)) return CKR_ATTRIBUTE_VALUE_INVALID;
-        *boolValue = *((CK_BBOOL *)pAttr->pValue);
-    }
-    return CKR_OK;
-}
-    
-CK_ATTRIBUTE *map2attr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> m, CK_ULONG *pAttrLenth){
-	int i;
-	std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR>::iterator it;
-	CK_ATTRIBUTE *pRes;
-    if ((pRes = (CK_ATTRIBUTE *)malloc(sizeof *pRes * m.size())) == NULL) {
-		return NULL;
-	};
-	for (i=0, it=m.begin(); it != m.end(); it++, i++){
-		CK_ATTRIBUTE_PTR pDest = pRes + i;
-		CK_ATTRIBUTE_PTR pSrc = it->second;
-		if ((pDest->pValue = malloc(pSrc->ulValueLen)) == NULL) {
-			return NULL;
-		}
-		memcpy(pDest->pValue, pSrc->pValue, pSrc->ulValueLen);
-		pDest->ulValueLen = pSrc->ulValueLen;
-		pDest->type = pSrc->type;
-	}
-	*pAttrLenth = (CK_ULONG)i;
-	return pRes;
-}
-
-		
-CK_ATTRIBUTE_PTR attrMerge(
-		CK_ATTRIBUTE_PTR pA, CK_ULONG aLen, CK_ATTRIBUTE_PTR  pB, CK_ULONG bLen, CK_ULONG *pAttrLength) {
-	std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> a = attr2map(pA, aLen);
-	std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> b = attr2map(pB, bLen);
-
-	a.insert(b.begin(), b.end());
-	CK_ATTRIBUTE_PTR ret=map2attr(a, pAttrLength);
-	a.clear();
-	b.clear();
-	return ret;
-}
-    
-
+// void printhex(const char *s, unsigned char *buf, unsigned long length){
+//     int i;
+//     printf("%s\n", s);
+//     for (i=0; i< (int)length; i++) {
+//         if ((i % 16) == 0) printf("\n");
+//         printf("%02X ", buf[i]);
+//     }
+//     printf("\n");
+// }
 
 CK_RV GenerateKeyPairRSA(
     pkcs11_session_t *session,
@@ -785,18 +778,14 @@ CK_RV GenerateKeyPairRSA(
     if (sizeof(CK_ULONG) != bitLenAttrPtr->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
     CK_ULONG bitLen = *((CK_ULONG *)bitLenAttrPtr->pValue);
 
-	uint8_t* publicKey;
+	uint8_t* publicKey = NULL;
 	size_t publicKeyLength;
-	uint8_t* privateKey;
+	uint8_t* privateKey = NULL;
 	size_t privateKeyLength;
+    size_t attrLen;
+    uint8_t *serialized_attr;
+	pkcs11_object_t *pub, *pro;
 
-	try {
-		crypto->RSAKeyGeneration(
-			&publicKey, &publicKeyLength, &privateKey, &privateKeyLength, (size_t) bitLen);
-	}
-	catch (std::exception e) {
-		return CKR_DEVICE_ERROR;
-	}
     CK_RV ret = CKR_OK;
     CK_BBOOL token;
     if ((ret != getAttrBool(publicKeyAttrMap, CKA_TOKEN, CK_FALSE, &token)) != CKR_OK) {
@@ -813,31 +802,43 @@ CK_RV GenerateKeyPairRSA(
 		// Public key
 		CK_OBJECT_CLASS keyClass = CKO_PUBLIC_KEY;
 		CK_ATTRIBUTE publicKeyAttribs[] = {
-			{ CKA_CLASS, &keyClass, sizeof keyClass },
-			{ CKA_TOKEN, &token, sizeof token },
-			{ CKA_PRIVATE, &fa, sizeof fa },
+			{ CKA_CLASS, &keyClass, sizeof(keyClass) },
+			{ CKA_TOKEN, &token, sizeof(token) },
+			{ CKA_PRIVATE, &fa, sizeof(fa) },
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
-		pkcs11_object_t *pub = (pkcs11_object_t *)malloc(sizeof *pub);
+		pub = (pkcs11_object_t *)malloc(sizeof *pub);
 		pub->pAttributes = attrMerge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs, pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub->ulAttributeCount);
-		pub->pValue = publicKey;
-		pub->valueLength = publicKeyLength;
-		*phPublicKey = (CK_ULONG)pub;
 ;
 		// Private key
 		keyClass = CKO_PRIVATE_KEY;
 		CK_ATTRIBUTE privateKeyAttr[] = {
-			{ CKA_CLASS, &keyClass, sizeof keyClass },
-			{ CKA_TOKEN, &token, sizeof token },
+			{ CKA_CLASS, &keyClass, sizeof(keyClass)},
+			{ CKA_TOKEN, &token, sizeof(token)},
 			{ CKA_PRIVATE, &tr, sizeof tr },
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
-		pkcs11_object_t *pro = (pkcs11_object_t *)malloc(sizeof *pro);
+        serialized_attr = attributeSerialize(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, &attrLen);
+
+		pro = (pkcs11_object_t *)malloc(sizeof *pro);
 		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
-		pro->pValue = privateKey;
-		pro->valueLength = privateKeyLength;
-		*phPrivateKey = (CK_ULONG)pro;
     }
+
+	try {
+		crypto->RSAKeyGeneration(
+			&publicKey, &publicKeyLength, &privateKey, &privateKeyLength, serialized_attr, attrLen, bitLen);
+	}
+	catch (std::exception e) {
+		return CKR_DEVICE_ERROR;
+	}
+
+    pub->pValue = publicKey;
+    pub->valueLength = publicKeyLength;
+    *phPublicKey = (CK_ULONG)pub;
+
+    pro->pValue = privateKey;
+    pro->valueLength = privateKeyLength;
+    *phPrivateKey = (CK_ULONG)pro;
 	return ret;
 }
 

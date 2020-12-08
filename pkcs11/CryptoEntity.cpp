@@ -48,34 +48,8 @@ CryptoEntity::CryptoEntity() {
 	fclose(fp);
 }
 
-void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, size_t nrBits) {
-	sgx_status_t stat;
-    int ret;
+#define MAX_KEY_BUF 8192
 
-    char *publicKey = (char *)malloc(MAX_KEY_BUFFER);	
-    char *privateKey = (char *)malloc(MAX_KEY_BUFFER);	
-	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, publicKey, privateKey, MAX_KEY_BUFFER, nrBits, NULL, 0);
-
-	if (stat != SGX_SUCCESS || ret != 0) {
-		free(publicKey);
-		free(privateKey);
-		throw new std::exception;
-	}
-
-	*pPublicKeyLength = strlen(publicKey) + 1;
-	*pPrivateKeyLength = strlen(privateKey) + 1;
-	publicKey = (char *)realloc(publicKey, *pPublicKeyLength);
-	privateKey = (char *)realloc(privateKey, *pPrivateKeyLength);
-	*pPublicKey = (uint8_t *)publicKey;
-	*pPrivateKey = (uint8_t *)privateKey;
-}
-
-void CryptoEntity::RSAInitEncrypt(uint8_t* key, size_t length) {
-	this->initializedKey.value = key;
-	this->initializedKey.length = length;
-}
-
-#if 0
 void printhex(const char *s, unsigned char *buf, unsigned long length){
     int i;
     printf("%s\n", s);
@@ -85,7 +59,33 @@ void printhex(const char *s, unsigned char *buf, unsigned long length){
     }
     printf("\n");
 }
-#endif
+
+void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *serialAttr, size_t serialAttrLen, size_t bitLen) {
+	sgx_status_t stat;
+    int ret;
+
+    *pPrivateKeyLength = MAX_KEY_BUF;
+    *pPublicKeyLength = MAX_KEY_BUF;
+
+    *pPublicKey = (uint8_t *)calloc(*pPublicKeyLength, 1);	
+    *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);	
+
+	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, NULL, 0, bitLen);
+	if (stat != SGX_SUCCESS || ret != 0) {
+        printf("Error... %i\n", ret);
+		free(*pPublicKey);
+		free(*pPrivateKey);
+		throw new std::exception;
+	}
+	*pPublicKey = (uint8_t *)realloc(*pPublicKey, *pPublicKeyLength);
+	*pPrivateKey = (uint8_t *)realloc(*pPrivateKey, *pPrivateKeyLength);
+}
+
+void CryptoEntity::RSAInitEncrypt(uint8_t* key, size_t length) {
+	this->initializedKey.value = key;
+	this->initializedKey.length = length;
+}
+
 
 
 unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
@@ -93,11 +93,13 @@ unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t p
 	unsigned char* cipherData = (unsigned char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(unsigned char));
     int retval;
 
-	ret = SGXEncryptRSA(this->enclave_id_, &retval, (char *)this->initializedKey.value, this->initializedKey.length,
+	ret = SGXEncryptRSA(this->enclave_id_, &retval, this->initializedKey.value, this->initializedKey.length,
 		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
     
-	if (ret != SGX_SUCCESS || retval != 0)
+	if (ret != SGX_SUCCESS || retval != 0) {
+        printf("ret=%i\n", retval);
 		throw std::runtime_error("Encryption failed\n");
+    }
 	return cipherData;
 }
 
@@ -151,7 +153,7 @@ int CryptoEntity::RestoreRootKey(uint8_t *rootKeySealed, size_t rootKeySealedLen
 	sgx_status_t stat;
     int retval;
 	stat = SGXSetRootKeySealed(this->enclave_id_, &retval, rootKeySealed, rootKeySealedLength);
-	if (stat != SGX_SUCCESS || retval !=-0) return 1;
+	if (stat != SGX_SUCCESS || retval !=0) return 1;
     return 0;
 }
 

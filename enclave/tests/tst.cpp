@@ -4,14 +4,32 @@
 
 #include "../crypto_engine_t.h"
 
+#define CK_PTR *
+#define CK_DEFINE_FUNCTION(returnType, name) returnType name
+#define CK_DECLARE_FUNCTION(returnType, name) returnType name
+#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+#define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
 
-int SGXgenerateRSAKeyPair(char *, char *, size_t, size_t);
+#ifndef NULL_PTR
+#define NULL_PTR 0
+#endif
+
+#include "../../cryptoki/pkcs11.h"
+
+extern CK_BBOOL rootKeySet;
+
+int SGXgenerateRSAKeyPair(
+        uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
+        uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
+        const unsigned char *exponent, size_t exponentLength,
+        size_t bitLen);
 
 void test_generateRSAKeyPair(){
-	char buf1[2048], buf2[2048];
-	CU_ASSERT(0 == SGXgenerateRSAKeyPair(buf1, buf2, 2048, 2048));
-	CU_ASSERT(1 == SGXgenerateRSAKeyPair(buf1, buf2, 10, 200));
-	CU_ASSERT(4 == SGXgenerateRSAKeyPair(buf1, buf2, 10, 2048));
+	uint8_t pubkey[2048], privkey[2048];
+	size_t pubkeyLength, privkeyLength;
+    rootKeySet = CK_TRUE;
+	CU_ASSERT(0 == SGXgenerateRSAKeyPair(pubkey, sizeof pubkey, &pubkeyLength, privkey, sizeof privkey, &privkeyLength, NULL, 0, 2048));
+	CU_ASSERT(-6 == SGXgenerateRSAKeyPair(pubkey, 10, &pubkeyLength, privkey, 10, &privkeyLength, NULL, 0, 2048));
 }
 
 
@@ -23,7 +41,7 @@ void test_generatePassPhrase(){
 
 
 int SGXEncryptRSA(
-    const char* public_key, size_t public_key_length,
+    const uint8_t* public_key, size_t public_key_length,
 	const uint8_t* plaintext, size_t plaintext_length,
 	uint8_t* ciphertext, size_t ciphertext_length,
 	size_t* cipherTextLength);
@@ -34,21 +52,24 @@ int SGXDecryptRSA(
 	uint8_t* plaintext, size_t plaintext_length,
 	size_t* plainTextLength);
 
-void test_SGXEncryptRSA(){
-	char public_key[2048], private_key[2048];
+void test_SGXcryptRSA(){
+	uint8_t pubkey[2048], privkey[2048];
 	uint8_t plaintext[16] = {0x11, 0x12};
 	uint8_t exp_plaintext[16] = {0x11, 0x12};
 	uint8_t ciphertext[256] = {0};
 	size_t cipherTextLength;
 	size_t plainTextLength;
+	size_t pubkeyLength, privkeyLength;
 
-	CU_ASSERT(0 == SGXgenerateRSAKeyPair(public_key, private_key, 2048, 2048));
-	CU_ASSERT(0 == SGXEncryptRSA(
-		public_key, strlen(public_key),
+	CU_ASSERT_FATAL(0 == SGXgenerateRSAKeyPair(pubkey, sizeof pubkey, &pubkeyLength, privkey, sizeof privkey, &privkeyLength, NULL, 0, 2048));
+	printf("%s:%i privkeyLength=%i \n", __FILE__, __LINE__, privkeyLength);
+	CU_ASSERT_FATAL(0 == SGXEncryptRSA(
+		pubkey, pubkeyLength,
 		plaintext, sizeof plaintext,
 		ciphertext, sizeof ciphertext, &cipherTextLength));
-	CU_ASSERT(0 == SGXDecryptRSA(
-		private_key, strlen(private_key),
+	printf("%s:%i privkeyLength=%i \n", __FILE__, __LINE__, privkeyLength);
+	CU_ASSERT_FATAL(0 == SGXDecryptRSA(
+		privkey, privkeyLength,
 		ciphertext, cipherTextLength,
 		plaintext, sizeof plaintext, &plainTextLength));
 	CU_ASSERT(plainTextLength == sizeof plaintext);	
@@ -71,9 +92,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	/* add the tests to the suite */
-	if ((NULL == CU_add_test(pSuite, "generateRSAKeyPair()", test_generateRSAKeyPair)) ||
-	   (NULL == CU_add_test(pSuite, "generatePassPhrase()", test_generatePassPhrase)) ||
-	   (NULL == CU_add_test(pSuite, "SGXEncryptRSA(), SGXDecryptRSA()", test_SGXEncryptRSA))
+	if ((NULL == CU_add_test(pSuite, "generateRSAKeyPair()", test_generateRSAKeyPair))
+	   // || (NULL == CU_add_test(pSuite, "generatePassPhrase()", test_generatePassPhrase))
+	   || (NULL == CU_add_test(pSuite, "SGXEncryptRSA(), SGXDecryptRSA()", test_SGXcryptRSA))
 	 )
 	{
 		CU_cleanup_registry();
