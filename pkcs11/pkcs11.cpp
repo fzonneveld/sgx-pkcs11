@@ -56,7 +56,7 @@ static pkcs11_session_t *get_session(CK_SESSION_HANDLE handle) {
 
     // Find session handle
     std::map<CK_SESSION_HANDLE, pkcs11_session_t>::iterator iter = sessions.find(handle);
-    
+
     return iter != sessions.end() ? &iter->second : NULL;
 }
 
@@ -91,7 +91,18 @@ T GetEnv(const char *env_name, T default_value){
 
 const char *defaultRootkeyFile = DEFAULT_ROOT_KEY_FILE;
 const char defaultDBfileName[] = DEFAULT_DB_NAME;
-    
+
+
+
+#define CREATE_DB \
+	"CREATE TABLE RootKey(value BLOB);" \
+	"CREATE TABLE Attribute(attributeId INTEGER, attributeType INTEGER, value BLOB);" \
+	"CREATE TABLE Object(objectId INTEGER, objectClass INTEGER, value BLOB);" \
+	"CREATE TABLE ObjectAttr(" \
+		"objectId INTEGER REFERENCES Object(ObjectId)," \
+		"attributeId INTEGER REFERENCES Attribute(attributeId)" \
+	");"
+
 
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 {
@@ -109,75 +120,64 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
     // Set the slots, slots are simulated
     // Should be environment variable configurable
     nr_slots = GetEnv<int>((const char *)"PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
-    const char *rootKeyFileName = GetEnv<std::string>(
-        "PKCS11_ROOT_KEY_FILE", defaultRootkeyFile).c_str();
-    FILE *f;
-    if ((f = fopen(rootKeyFileName, "r")) == NULL) {
-        printf("Creating %s\n", rootKeyFileName);
-        if ((f = fopen(rootKeyFileName, "w+")) == NULL) {
-            printf("Error in open file\n");
+    printf("Opening DB\n");
+    const char *dbFileName = GetEnv<std::string>((const char *)"PKCS_DB_NAME", DEFAULT_DB_NAME).c_str();
+    struct stat st;
+    const char *sql;
+    size_t rootKeyLength = crypto->GetSealedRootKeySize();
+    uint8_t *rootKey = alloca(rootKeyLength);
+	sqlite3_stmt *pStmt;
+    if (stat(dbFileName, &st) < 0) {
+        char *err_msg = NULL;
+        printf("Creating new database: %s\n", dbFileName);
+        if (SQLITE_OK != sqlite3_open(dbFileName, &db)) {
+            fprintf(stderr, "Cannot open DB=%s\n", dbFileName);
             return CKR_DEVICE_ERROR;
         }
-        size_t rootKeyLength = crypto->GetSealedRootKeySize();
-        uint8_t *rootKey = alloca(rootKeyLength);
+        sql = CREATE_DB;
+        if (SQLITE_OK != sqlite3_exec(db, sql, NULL, 0, &err_msg)) {
+            fprintf(stderr, "SQL error: %s\n", err_msg);
+            sqlite3_free(err_msg);
+            return CKR_DEVICE_ERROR;
+        }
         try {
             crypto->GenerateRootKey(rootKey, &rootKeyLength);
         }
         catch (std::runtime_error) {
             return CKR_DEVICE_ERROR;
         }
-        fwrite(rootKey, rootKeyLength, 1, f);
-        fclose(f);
-    } else {
-        printf("Restoring '%s'\n", rootKeyFileName);
-        struct stat st;
-        if (fstat(fileno(f), &st) < 0) {
-            perror("Error :");
-            return CKR_DEVICE_ERROR;
-        }
-        uint8_t *rootKey=(uint8_t *)alloca(st.st_size);
-        if (1 != fread(rootKey, st.st_size, 1, f)){ 
-            return CKR_DEVICE_ERROR;
-        }
-        fclose(f);
-        try {
-            if (crypto->RestoreRootKey(rootKey, (size_t)st.st_size)) {
-                return CKR_DEVICE_ERROR;
-            }
-        }
-        catch (std::runtime_error) {
-            return CKR_DEVICE_ERROR;
-        }
-    }
-    printf("Opening DB\n");
-    const char *dbFileName = GetEnv<std::string>((const char *)"PKCS_DB_NAME", DEFAULT_DB_NAME).c_str();
-    struct stat st;
-    if (stat(dbFileName, &st) < 0) {
-        char *err_msg = NULL;
-        printf("Creating new database: %s\n", dbFileName);
-        if (SQLITE_OK != sqlite3_open(dbFileName, &db)) {
-            printf("Cannot open DB=%s\n", dbFileName);
-            return CKR_DEVICE_ERROR;
-        }
-        const char *create_sql = \
-            "CREATE TABLE Atribute(attributeId INTEGER, attributeType INTEGER, value BLOB);"
-            "CREATE TABLE Object(objectId INTEGER, objectClass INTEGER, value BLOB);"
-            "CREATE TABLE ObjectAttr("
-                "objectId INTEGER REFERENCES Object(ObjectId),"
-                "attributeId INTEGER REFERENCES Attribute(attributeId)"
-            ");" ;
-        if (SQLITE_OK != sqlite3_exec(db, create_sql, 0, 0, &err_msg)) {
-            fprintf(stderr, "SQL error: %s\n", err_msg);
-            sqlite3_free(err_msg);
-            printf("Creating new database\n");
-            return CKR_DEVICE_ERROR;
-        }
+		sql = "INSERT INTO RootKey(value) VALUES(?);";
+		if (SQLITE_OK != sqlite3_prepare_v2(db, sql, -1, &pStmt, NULL))
+			return CKR_DEVICE_ERROR;
+		if (SQLITE_OK != sqlite3_bind_blob(pStmt, 1, rootKey, rootKeyLength, SQLITE_STATIC))
+			return CKR_DEVICE_ERROR;
+		int rc;
+		if (SQLITE_DONE != (rc = sqlite3_step(pStmt))) {
+			return CKR_DEVICE_ERROR;
+		}
+		sqlite3_finalize(pStmt);
     } else {
         printf("Using old database %s\n", defaultDBfileName);
         if (SQLITE_OK != sqlite3_open(defaultDBfileName, &db)) {
-            printf("Cannot open DB=%s\n", defaultDBfileName);
-            printf("Creating new database\n");
+            fprintf(stderr, "Cannot open DB=%s\n", defaultDBfileName);
+            return CKR_DEVICE_ERROR;
         }
+		sql = "SELECT value FROM RootKey LIMIT 1;";
+		if (SQLITE_OK != sqlite3_prepare_v2(db, sql, -1, &pStmt, NULL))
+			return CKR_DEVICE_ERROR;
+		if (SQLITE_ROW != sqlite3_step(pStmt))
+			return CKR_DEVICE_ERROR;
+		size_t rootKeySize = sqlite3_column_bytes(pStmt, 0);
+		rootKey = (uint8_t *) sqlite3_column_blob(pStmt, 0);
+        try {
+            if (crypto->RestoreRootKey(rootKey, rootKeySize))
+                return CKR_DEVICE_ERROR;
+		}
+        catch (std::runtime_error) {
+			sqlite3_finalize(pStmt);
+            return CKR_DEVICE_ERROR;
+        }
+		sqlite3_finalize(pStmt);
     }
 	return CKR_OK;
 }
@@ -225,7 +225,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetSlotInfo)(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pIn
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (nr_slots <= slotID) return CKR_SLOT_ID_INVALID;
-    
+
     char s[64] = {0};
     sprintf(s, SLOT_DESCRIPTION, slotID);
 	SET_STRING(pInfo->slotDescription, s);
@@ -264,7 +264,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismList)(CK_SLOT_ID slotID, CK_MECHANISM_TY
 
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (nr_slots <= slotID) return CKR_SLOT_ID_INVALID;
-    
+
     if (pMechanismList == NULL) {
         *pulCount = mechanismCount;
         return CKR_OK;
@@ -477,8 +477,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 }
 
 
-CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession, 
-	CK_BYTE_PTR pData, CK_ULONG ulDataLen, 
+CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
+	CK_BYTE_PTR pData, CK_ULONG ulDataLen,
 	CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen) {
 
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -755,16 +755,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 //     return 0;
 // }
 
-// void printhex(const char *s, unsigned char *buf, unsigned long length){
-//     int i;
-//     printf("%s\n", s);
-//     for (i=0; i< (int)length; i++) {
-//         if ((i % 16) == 0) printf("\n");
-//         printf("%02X ", buf[i]);
-//     }
-//     printf("\n");
-// }
-
 CK_RV GenerateKeyPairRSA(
     pkcs11_session_t *session,
     std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> publicKeyAttrMap,
@@ -791,7 +781,7 @@ CK_RV GenerateKeyPairRSA(
     if ((ret != getAttrBool(publicKeyAttrMap, CKA_TOKEN, CK_FALSE, &token)) != CKR_OK) {
         return ret;
     }
-    if (token) {	
+    if (token) {
 		// For now we do not store for the token
         return CKR_ATTRIBUTE_VALUE_INVALID;
     } else {
@@ -823,6 +813,7 @@ CK_RV GenerateKeyPairRSA(
 		pro = (pkcs11_object_t *)malloc(sizeof *pro);
 		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
     }
+
 
 	try {
 		crypto->RSAKeyGeneration(

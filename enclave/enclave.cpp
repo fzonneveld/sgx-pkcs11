@@ -8,6 +8,8 @@
 #include "tSgxSSL_api.h"
 #include "sgx_urts.h"
 #include "sgx_tseal.h"
+#include "sgx_tcrypto.h"
+#include "sgx_trts.h"
 
 #include "openssl/rsa.h"
 #include "openssl/pem.h"
@@ -25,7 +27,7 @@
 
 #include "../cryptoki/pkcs11.h"
 
-#define ROOTKEY_LENGTH 32
+#define ROOTKEY_LENGTH 16
 static uint8_t rootKey[ROOTKEY_LENGTH];
 CK_BBOOL rootKeySet = CK_FALSE;
 
@@ -69,113 +71,44 @@ getRSAder_good:
 }
 
 
-char *generatePassPhrase(){
-    uint8_t buf[32];
-    BIO *bp_b64, *bp_phrase;
-    char *ret=NULL;
-    BUF_MEM *p;
-
-    RAND_bytes(buf, sizeof buf);
-    if ((bp_b64 = BIO_new(BIO_f_base64())) == NULL) return NULL;
-    if ((bp_phrase = BIO_new(BIO_s_mem())) == NULL) goto generatePassPhrase_err0;
-    BIO_ctrl(bp_phrase, BIO_CTRL_SET_CLOSE, BIO_NOCLOSE, NULL);
-    BIO_set_flags(bp_b64, BIO_FLAGS_BASE64_NO_NL);
-    BIO_push(bp_b64, bp_phrase);
-    BIO_write(bp_b64, buf, sizeof buf);
-    BIO_ctrl(bp_b64,BIO_CTRL_FLUSH,0,NULL);
-    BIO_get_mem_ptr(bp_phrase, &p);
-    BIO_free(bp_phrase);
-    // Enforce a NULL terminated string, not clear from
-    // spec what is returned, it is without a newline but is
-    // it a zero terminated string?
-    ret = (char *) calloc(p->length + 1, 1);
-    memcpy(ret, p->data, p->length);
-    // Phrase is data contains a base64 string zero terminated.
-    // Entropy in phrase is 32 * 8 == 256 bits.
-    BUF_MEM_free(p);
-generatePassPhrase_err0:
-    BIO_free(bp_b64);
-    return ret;
-}
-
-int encrypt(uint8_t *plaintext, int plaintext_len, unsigned char *key,
-            uint8_t *iv, uint8_t *ciphertext)
-{
-    EVP_CIPHER_CTX *ctx;
-    int len, ret=-1;
-    int ciphertext_len;
-
-    if(!(ctx = EVP_CIPHER_CTX_new())) return -1;
-    if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv)) goto encrypt_err;
-
-    if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len)) goto encrypt_err;
-    ciphertext_len = len;
-    if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) goto encrypt_err;
-    ciphertext_len += len;
-	ret = ciphertext_len;
-encrypt_err:
-    EVP_CIPHER_CTX_free(ctx);
-    return ret;
-}
-
-int decrypt(const uint8_t *ciphertext, int ciphertext_len, uint8_t *key,
-            uint8_t *iv, uint8_t *plaintext)
-{
-    EVP_CIPHER_CTX *ctx;
-
-    int len;
-	int ret = -1;
-    int plaintext_len;
-
-    /* Create and initialise the context */
-    if(!(ctx = EVP_CIPHER_CTX_new())) return -1;
-
-    if(1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv)) goto decrypt_err;
-    if(1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len)) goto decrypt_err;
-    plaintext_len = len;
-    if(1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len)) goto decrypt_err;
-    plaintext_len += len;
-    /* Clean up */
-	ret = plaintext_len;
-decrypt_err:
-    EVP_CIPHER_CTX_free(ctx);
-    return ret;
-}
-
-
 int SGXgenerateRSAKeyPair(
         uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
         uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
+		const uint8_t *pSerialAttr, size_t serialAttrLen,
         const unsigned char *exponent, size_t exponentLength,
         size_t bitLen) {
     int ret = -1;
     RSA *rsa_key = NULL;
-    size_t privateKeyLength, publicKeyLength;
+    size_t privateKeyDERlength, publicKeyLength;
     uint8_t *pPrivateKeyDER = NULL, *pPublicKeyDER = NULL;
-	uint8_t iv[16] = {0};
-	int cipherTextLen, len;
 
     if (rootKeySet == CK_FALSE) return ret;
 
 	if ((rsa_key = generateRSA(bitLen, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err;
 	ret = -2;
-    if ((privateKeyLength = getRSAder(rsa_key, &pPrivateKeyDER, i2d_PrivateKey)) <= 0) goto generateRSAKeyPair_err;
+    if ((privateKeyDERlength = getRSAder(rsa_key, &pPrivateKeyDER, i2d_PrivateKey)) <= 0) goto generateRSAKeyPair_err;
 	ret = -3;
-	cipherTextLen = privateKeyLength + 1;
-	cipherTextLen = ((privateKeyLength >> 4) + (privateKeyLength & 15 ? 1 : 0)) * 16;
-	if ((pPrivateKeyDER = (uint8_t *)realloc(pPrivateKeyDER, cipherTextLen)) == 0) goto generateRSAKeyPair_err;
-	ret = -4;
-	if (-1 ==(len = encrypt(pPrivateKeyDER, privateKeyLength, rootKey, iv, pPrivateKeyDER))) goto generateRSAKeyPair_err;;
-	ret = -5;
     if (0 >= (publicKeyLength = getRSAder(rsa_key, &pPublicKeyDER, i2d_PublicKey))) goto generateRSAKeyPair_err;
-	ret = -6;
+	ret = -4;
     if (publicKeyLength > RSAPublicKeyLength) goto generateRSAKeyPair_err;
-    if (privateKeyLength > RSAPrivateKeyLength) goto generateRSAKeyPair_err;
 
+    if ((privateKeyDERlength  + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE) > RSAPrivateKeyLength) goto generateRSAKeyPair_err;
+
+	if (SGX_SUCCESS != sgx_read_rand(RSAPrivateKey + SGX_AESGCM_MAC_SIZE, SGX_AESGCM_IV_SIZE)) goto generateRSAKeyPair_err;
+
+	if (SGX_SUCCESS != sgx_rijndael128GCM_encrypt(
+		(sgx_aes_gcm_128bit_key_t *) rootKey,
+		pPrivateKeyDER, privateKeyDERlength, 
+		RSAPrivateKey + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
+		RSAPrivateKey + SGX_AESGCM_MAC_SIZE,
+		SGX_AESGCM_IV_SIZE,
+		//pSerialAttr, serialAttrLen,
+		NULL, 0,
+		(sgx_aes_gcm_128bit_tag_t *) (RSAPrivateKey))) goto generateRSAKeyPair_err;
+	
     *RSAPublicKeyLengthOut = publicKeyLength;
-    *RSAPrivateKeyLengthOut = (size_t) len;
+    *RSAPrivateKeyLengthOut = privateKeyDERlength + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE;
     memcpy(RSAPublicKey, pPublicKeyDER, publicKeyLength);
-    memcpy(RSAPrivateKey, pPrivateKeyDER, len);
     ret = 0;
 generateRSAKeyPair_err:
     if (pPrivateKeyDER) free(pPrivateKeyDER);
@@ -198,11 +131,11 @@ int SGXEncryptRSA(
 	if (NULL == (pKey = EVP_PKEY_new())) goto SGXEncryptRSA_err;
 	if (NULL == (pKey = d2i_PublicKey(EVP_PKEY_RSA, &pKey, &public_key, public_key_length))) goto SGXEncryptRSA_err;
 	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto SGXEncryptRSA_err;
-	
+
 	if (( len = RSA_public_encrypt(
             plaintext_length, (uint8_t*)plaintext, (unsigned char*)ciphertext, rsa, padding)) == -1)
         goto SGXEncryptRSA_err;
-	
+
 	*cipherTextLength = (size_t)len;
     ret = 0;
 SGXEncryptRSA_err:
@@ -220,22 +153,35 @@ int SGXDecryptRSA(
         size_t plaintext_length,
         size_t *plainTextLength) {
 
-    uint8_t *to;
+    uint8_t *to = NULL;
     int ret = -1;
 	int padding = RSA_PKCS1_PADDING;
 	RSA *rsa = NULL;
     int to_len = -1;
-	uint8_t iv[16] = {0};
 	EVP_PKEY *pKey = NULL;
-	int len;
-	uint8_t *private_key = NULL;
+	const uint8_t *endptr;
+	uint8_t *private_key_der = NULL;
+	size_t privateKeyDERlength;
 
     if (rootKeySet == CK_FALSE) return ret;
 
-	if (NULL == (private_key = (uint8_t *)malloc(private_key_ciphered_length))) goto SGXDecryptRSA_err;
-	if ((len = decrypt(private_key_ciphered, private_key_ciphered_length, rootKey, iv, private_key)) < 0)
-		goto SGXDecryptRSA_err;
-	if ((pKey = d2i_PrivateKey(EVP_PKEY_RSA, &pKey, (const uint8_t **)&private_key, (long) len)) == NULL)
+	if (private_key_ciphered_length < (SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE)) goto SGXDecryptRSA_err;
+	privateKeyDERlength = private_key_ciphered_length - (SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE);
+
+	if (NULL == (private_key_der = (uint8_t *)malloc(privateKeyDERlength))) goto SGXDecryptRSA_err;
+	ret = -2;
+	if (SGX_SUCCESS != sgx_rijndael128GCM_decrypt(
+		(sgx_aes_gcm_128bit_key_t *) rootKey,
+		private_key_ciphered + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
+		privateKeyDERlength,
+		private_key_der,
+		private_key_ciphered + SGX_AESGCM_MAC_SIZE,
+		SGX_AESGCM_IV_SIZE,
+		NULL, 0,
+		(sgx_aes_gcm_128bit_tag_t *) private_key_ciphered)) goto SGXDecryptRSA_err;
+	ret  = -3;
+	endptr = (const uint8_t *) private_key_der;
+	if ((pKey = d2i_PrivateKey(EVP_PKEY_RSA, &pKey, &endptr, (long) privateKeyDERlength)) == NULL)
 		goto SGXDecryptRSA_err;
 	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto SGXDecryptRSA_err;
     if ((to = (uint8_t *)malloc(RSA_size(rsa))) == NULL) goto SGXDecryptRSA_err;
@@ -248,6 +194,8 @@ int SGXDecryptRSA(
     *plainTextLength = to_len;
     ret = 0;
 SGXDecryptRSA_err:
+	if (to) free(to);
+	if (private_key_der) free(private_key_der);
     if (pKey) EVP_PKEY_free(pKey);
     return ret;
 }
@@ -268,7 +216,7 @@ int SGXGenerateRootKey(uint8_t *rootKeySealed, size_t root_key_length, size_t *r
     if (sealedSize > root_key_length)
         return -1;
     if ((SGX_SUCCESS != (stat = sgx_seal_data(
-            0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, root_key_length, (sgx_sealed_data_t *)rootKeySealed)))) 
+            0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, root_key_length, (sgx_sealed_data_t *)rootKeySealed))))
         return -1;
     rootKeySet = CK_TRUE;
     return 0;
@@ -283,7 +231,7 @@ int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed, si
         return -1;
     }
     if ((SGX_SUCCESS != (stat = sgx_seal_data(
-            0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, sizeof rootKey, (sgx_sealed_data_t *)root_key_sealed)))) 
+            0, NULL, sizeof(rootKey), (const uint8_t *)rootKey, sizeof rootKey, (sgx_sealed_data_t *)root_key_sealed))))
         return -1;
     return 0;
 }
@@ -302,4 +250,3 @@ int SGXSetRootKeySealed(const uint8_t *root_key_sealed, size_t root_key_len_seal
     rootKeySet = CK_TRUE;
     return 0;
 }
-

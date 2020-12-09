@@ -16,9 +16,7 @@ CryptoEntity::CryptoEntity() {
 		if ((fp = fopen(this->kTokenFile, "wb")) == nullptr) {
 			throw std::runtime_error("Failed to create the launch token file.");
 		}
-	}
-
-	else {
+	} else {
 		// read the token from saved file
 		const size_t read_num = fread(launch_token, 1,
 			sizeof(sgx_launch_token_t), fp);
@@ -50,29 +48,19 @@ CryptoEntity::CryptoEntity() {
 
 #define MAX_KEY_BUF 8192
 
-void printhex(const char *s, unsigned char *buf, unsigned long length){
-    int i;
-    printf("%s\n", s);
-    for (i=0; i< (int)length; i++) {
-        if ((i % 16) == 0) printf("\n");
-        printf("%02X ", buf[i]);
-    }
-    printf("\n");
-}
-
-void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *serialAttr, size_t serialAttrLen, size_t bitLen) {
+void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *pSerialAttr, size_t serialAttrLen, size_t bitLen) {
 	sgx_status_t stat;
     int ret;
 
+	// Set large enough for 4096
     *pPrivateKeyLength = MAX_KEY_BUF;
     *pPublicKeyLength = MAX_KEY_BUF;
 
     *pPublicKey = (uint8_t *)calloc(*pPublicKeyLength, 1);	
     *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);	
 
-	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, NULL, 0, bitLen);
+	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, pSerialAttr, serialAttrLen, NULL, 0, bitLen);
 	if (stat != SGX_SUCCESS || ret != 0) {
-        printf("Error... %i\n", ret);
 		free(*pPublicKey);
 		free(*pPrivateKey);
 		throw new std::exception;
@@ -122,6 +110,7 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t* cipherData, size_t cipherDataLe
 			cipherData, cipherDataLength,
 			plainData, max_rsa_size, plainLength);
 	if (stat != SGX_SUCCESS || retval != 0) {
+		fprintf(stderr, "Error %i\n", retval);
 		throw std::runtime_error("Decryption failed\n");
     }
 	return plainData;
@@ -153,7 +142,10 @@ int CryptoEntity::RestoreRootKey(uint8_t *rootKeySealed, size_t rootKeySealedLen
 	sgx_status_t stat;
     int retval;
 	stat = SGXSetRootKeySealed(this->enclave_id_, &retval, rootKeySealed, rootKeySealedLength);
-	if (stat != SGX_SUCCESS || retval !=0) return 1;
+	if (stat != SGX_SUCCESS || retval !=0) {
+		printf("%s:%ii stat=%i\n", __FILE__, __LINE__, retval);
+		return 1;
+	}
     return 0;
 }
 
