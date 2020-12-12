@@ -2,12 +2,12 @@
 #include <iostream>
 #include <map>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #include "pkcs11-interface.h"
-#include <sqlite3.h>
 
 #include "attribute.h"
+#include "attribute.h"
+#include "Database.h"
 
 
 CK_SLOT_ID PKCS11_SLOT_ID = 1;
@@ -16,7 +16,7 @@ CK_SESSION_HANDLE PKCS11_SESSION_ID = 1;
 
 CK_ULONG pkcs11_SGX_session_state = CKS_RO_PUBLIC_SESSION;
 CryptoEntity *crypto=NULL;
-sqlite3 *db=NULL;
+Database *db=NULL;
 
 
 CK_FUNCTION_LIST functionList = {
@@ -43,8 +43,12 @@ typedef struct pkcs11_object {
 typedef struct pkcs11_session {
     CK_ULONG slotID;
     CK_ULONG state;
+    struct {
+        CK_OBJECT_HANDLE_PTR  hObject;
+        CK_ULONG ulObjectCount;
+    } FindObject;
     CK_OBJECT_HANDLE handle;
-    PKCS_SGX_CK_OPERATION operation;
+    PKCS_OPERATION operation;
 } pkcs11_session_t;
 
 std::map<CK_SESSION_HANDLE, pkcs11_session_t> sessions;
@@ -94,16 +98,6 @@ const char defaultDBfileName[] = DEFAULT_DB_NAME;
 
 
 
-#define CREATE_DB \
-	"CREATE TABLE RootKey(value BLOB);" \
-	"CREATE TABLE Attribute(attributeId INTEGER, attributeType INTEGER, value BLOB);" \
-	"CREATE TABLE Object(objectId INTEGER, objectClass INTEGER, value BLOB);" \
-	"CREATE TABLE ObjectAttr(" \
-		"objectId INTEGER REFERENCES Object(ObjectId)," \
-		"attributeId INTEGER REFERENCES Attribute(attributeId)" \
-	");"
-
-
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 {
 	if (crypto != NULL)
@@ -122,62 +116,39 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
     nr_slots = GetEnv<int>((const char *)"PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
     printf("Opening DB\n");
     const char *dbFileName = GetEnv<std::string>((const char *)"PKCS_DB_NAME", DEFAULT_DB_NAME).c_str();
-    struct stat st;
-    const char *sql;
-    size_t rootKeyLength = crypto->GetSealedRootKeySize();
-    uint8_t *rootKey = alloca(rootKeyLength);
-	sqlite3_stmt *pStmt;
-    if (stat(dbFileName, &st) < 0) {
-        char *err_msg = NULL;
-        printf("Creating new database: %s\n", dbFileName);
-        if (SQLITE_OK != sqlite3_open(dbFileName, &db)) {
-            fprintf(stderr, "Cannot open DB=%s\n", dbFileName);
-            return CKR_DEVICE_ERROR;
-        }
-        sql = CREATE_DB;
-        if (SQLITE_OK != sqlite3_exec(db, sql, NULL, 0, &err_msg)) {
-            fprintf(stderr, "SQL error: %s\n", err_msg);
-            sqlite3_free(err_msg);
-            return CKR_DEVICE_ERROR;
-        }
+	try {
+		db = new Database(dbFileName);
+	}
+	catch (std::runtime_error) {
+		return CKR_DEVICE_ERROR;
+	}
+    if (db->IsNewDatabase()) {
+        printf("Using new database %s\n", defaultDBfileName);
+        size_t rootKeyLength = crypto->GetSealedRootKeySize();
+        uint8_t *rootKey = alloca(rootKeyLength);
         try {
             crypto->GenerateRootKey(rootKey, &rootKeyLength);
         }
         catch (std::runtime_error) {
             return CKR_DEVICE_ERROR;
         }
-		sql = "INSERT INTO RootKey(value) VALUES(?);";
-		if (SQLITE_OK != sqlite3_prepare_v2(db, sql, -1, &pStmt, NULL))
-			return CKR_DEVICE_ERROR;
-		if (SQLITE_OK != sqlite3_bind_blob(pStmt, 1, rootKey, rootKeyLength, SQLITE_STATIC))
-			return CKR_DEVICE_ERROR;
-		int rc;
-		if (SQLITE_DONE != (rc = sqlite3_step(pStmt))) {
-			return CKR_DEVICE_ERROR;
-		}
-		sqlite3_finalize(pStmt);
-    } else {
-        printf("Using old database %s\n", defaultDBfileName);
-        if (SQLITE_OK != sqlite3_open(defaultDBfileName, &db)) {
-            fprintf(stderr, "Cannot open DB=%s\n", defaultDBfileName);
+        if (db->SetRootKey(rootKey, rootKeyLength))
             return CKR_DEVICE_ERROR;
-        }
-		sql = "SELECT value FROM RootKey LIMIT 1;";
-		if (SQLITE_OK != sqlite3_prepare_v2(db, sql, -1, &pStmt, NULL))
-			return CKR_DEVICE_ERROR;
-		if (SQLITE_ROW != sqlite3_step(pStmt))
-			return CKR_DEVICE_ERROR;
-		size_t rootKeySize = sqlite3_column_bytes(pStmt, 0);
-		rootKey = (uint8_t *) sqlite3_column_blob(pStmt, 0);
+    } else {
+		size_t rootKeyLength;
+        uint8_t *rootKey;
+
+        printf("Using old database %s\n", defaultDBfileName);
+		if (NULL == (rootKey = db->GetRootKey(&rootKeyLength)))
+            return CKR_DEVICE_ERROR;
         try {
-            if (crypto->RestoreRootKey(rootKey, rootKeySize))
+            if (crypto->RestoreRootKey(rootKey, rootKeyLength))
                 return CKR_DEVICE_ERROR;
 		}
         catch (std::runtime_error) {
-			sqlite3_finalize(pStmt);
             return CKR_DEVICE_ERROR;
         }
-		sqlite3_finalize(pStmt);
+        free(rootKey);
     }
 	return CKR_OK;
 }
@@ -185,7 +156,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 CK_DEFINE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
-    sqlite3_close(db);
+    delete(db);
     delete(crypto);
     crypto = NULL;
 	return CKR_OK;
@@ -405,7 +376,18 @@ CK_DEFINE_FUNCTION(CK_RV, C_CopyObject)(CK_SESSION_HANDLE hSession, CK_OBJECT_HA
 
 CK_DEFINE_FUNCTION(CK_RV, C_DestroyObject)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    int err;
+
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+    if (0 > (err = db->deleteObject(hObject))) {
+        printf("%s:%i %i\n", __FILE__, __LINE__, err);
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+	return CKR_OK;
 }
 
 
@@ -417,7 +399,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetObjectSize)(CK_SESSION_HANDLE hSession, CK_OBJECT
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	return CKR_OK;
 }
 
 
@@ -429,18 +416,62 @@ CK_DEFINE_FUNCTION(CK_RV, C_SetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OB
 
 CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsInit)(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_NONE != s->operation)
+		return CKR_OPERATION_ACTIVE;
+
+    if (s->FindObject.hObject != NULL) free(s->FindObject.hObject);
+    s->operation = PKCS11_CK_OPERATION_FIND;
+    int nrItems = 0;
+    s->FindObject.hObject = db->getObjectIds(pTemplate, ulCount, nrItems);
+    printf("hObject=%p\n", s->FindObject.hObject);
+    printf("nrItems=%i\n", nrItems);
+    if (nrItems < 0) {
+        return CKR_DEVICE_ERROR;
+    }
+    s->FindObject.ulObjectCount = nrItems;
+    s->operation = PKCS11_CK_OPERATION_FIND;
+	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_FindObjects)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR phObject, CK_ULONG ulMaxObjectCount, CK_ULONG_PTR pulObjectCount)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+    if (PKCS11_CK_OPERATION_FIND != s->operation)
+        return CKR_OPERATION_NOT_INITIALIZED;
+
+    if (NULL == phObject) {
+        *pulObjectCount = s->FindObject.ulObjectCount;
+    } else {
+        memcpy(phObject, s->FindObject.hObject, std::min(ulMaxObjectCount, s->FindObject.ulObjectCount) * sizeof *phObject);
+    }
+    return CKR_OK;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsFinal)(CK_SESSION_HANDLE hSession)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+
+    if (NULL == (s = get_session(hSession))) return CKR_SESSION_HANDLE_INVALID;
+
+    if (s->FindObject.hObject) free(s->FindObject.hObject);
+    s->FindObject.ulObjectCount = 0;
+
+    if (PKCS11_CK_OPERATION_FIND != s->operation) {
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+	return CKR_OK;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
@@ -450,7 +481,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (PKCS11_SGX_CK_OPERATION_NONE != s->operation)
+	if (PKCS11_CK_OPERATION_NONE != s->operation)
 		return CKR_OPERATION_ACTIVE;
 
 	if (NULL == pMechanism)
@@ -468,11 +499,10 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 		return CKR_MECHANISM_INVALID;
 	}
 
-	s->operation = PKCS11_SGX_CK_OPERATION_ENCRYPT;
+	s->operation = PKCS11_CK_OPERATION_ENCRYPT;
 
 	pkcs11_object_t *pub = (pkcs11_object_t *)hKey;
 	crypto->RSAInitEncrypt(pub->pValue, pub->valueLength);
-
 	return CKR_OK;
 }
 
@@ -486,7 +516,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (PKCS11_SGX_CK_OPERATION_ENCRYPT != s->operation)
+	if (PKCS11_CK_OPERATION_ENCRYPT != s->operation)
 		return CKR_OPERATION_NOT_INITIALIZED;
 
 	if (NULL == pData)
@@ -513,7 +543,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 		return CKR_DEVICE_ERROR;
 	}
 
-	s->operation = PKCS11_SGX_CK_OPERATION_NONE;
+	s->operation = PKCS11_CK_OPERATION_NONE;
 
 	return CKR_OK;
 }
@@ -535,7 +565,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (PKCS11_SGX_CK_OPERATION_NONE != s->operation)
+	if (PKCS11_CK_OPERATION_NONE != s->operation)
 		return CKR_OPERATION_ACTIVE;
 
 	if (NULL == pMechanism)
@@ -555,7 +585,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 
 	pkcs11_object_t *priv = (pkcs11_object_t *)hKey;
 	crypto->RSAInitDecrypt(priv->pValue, priv->valueLength);
-	s->operation = PKCS11_SGX_CK_OPERATION_DECRYPT;
+	s->operation = PKCS11_CK_OPERATION_DECRYPT;
 
 	return CKR_OK;
 }
@@ -567,7 +597,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (PKCS11_SGX_CK_OPERATION_DECRYPT != s->operation)
+	if (PKCS11_CK_OPERATION_DECRYPT != s->operation)
 		return CKR_OPERATION_NOT_INITIALIZED;
 
 	if (NULL == pEncryptedData)
@@ -597,7 +627,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 		return CKR_DEVICE_ERROR;
 	}
 
-	s->operation = PKCS11_SGX_CK_OPERATION_NONE;
+	s->operation = PKCS11_CK_OPERATION_NONE;
 
 	return CKR_OK;
 }
@@ -782,9 +812,6 @@ CK_RV GenerateKeyPairRSA(
         return ret;
     }
     if (token) {
-		// For now we do not store for the token
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    } else {
 		CK_BBOOL fa = CK_FALSE;
 		CK_BBOOL tr = CK_TRUE;
 		CK_KEY_TYPE keyType = CKK_RSA;
@@ -812,6 +839,9 @@ CK_RV GenerateKeyPairRSA(
 
 		pro = (pkcs11_object_t *)malloc(sizeof *pro);
 		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
+    } else {
+		// For now session objects not supported
+        return CKR_ATTRIBUTE_VALUE_INVALID;
     }
 
 
@@ -830,6 +860,13 @@ CK_RV GenerateKeyPairRSA(
     pro->pValue = privateKey;
     pro->valueLength = privateKeyLength;
     *phPrivateKey = (CK_ULONG)pro;
+
+    if (0 > db->setObject(CKO_PRIVATE_KEY, pro->pValue, pro->valueLength, pro->pAttributes, pro->ulAttributeCount)) {
+        return CKR_DEVICE_ERROR;
+    }
+    if (0 > db->setObject(CKO_PUBLIC_KEY, pub->pValue, pub->valueLength, pub->pAttributes, pub->ulAttributeCount)) {
+        return CKR_DEVICE_ERROR;
+    }
 	return ret;
 }
 

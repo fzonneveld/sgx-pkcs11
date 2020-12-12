@@ -56,8 +56,8 @@ void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLeng
     *pPrivateKeyLength = MAX_KEY_BUF;
     *pPublicKeyLength = MAX_KEY_BUF;
 
-    *pPublicKey = (uint8_t *)calloc(*pPublicKeyLength, 1);	
-    *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);	
+    *pPublicKey = (uint8_t *)calloc(*pPublicKeyLength, 1);
+    *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);
 
 	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, pSerialAttr, serialAttrLen, NULL, 0, bitLen);
 	if (stat != SGX_SUCCESS || ret != 0) {
@@ -83,7 +83,7 @@ unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t p
 
 	ret = SGXEncryptRSA(this->enclave_id_, &retval, this->initializedKey.value, this->initializedKey.length,
 		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
-    
+
 	if (ret != SGX_SUCCESS || retval != 0) {
         printf("ret=%i\n", retval);
 		throw std::runtime_error("Encryption failed\n");
@@ -118,7 +118,7 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t* cipherData, size_t cipherDataLe
 
 size_t CryptoEntity::GetSealedRootKeySize() {
 	sgx_status_t stat;
-    size_t retval; 
+    size_t retval;
 	stat = SGXGetSealedRootKeySize(this->enclave_id_, &retval);
 	if (stat != SGX_SUCCESS) {
 		throw std::runtime_error("Getting root key size failed failed\n");

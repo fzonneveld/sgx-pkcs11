@@ -52,12 +52,13 @@ CK_BYTE dat[] = "";
 CK_ULONG modulusBits = KEY_SIZE_BITS;
 
 
-CK_ATTRIBUTE publicRSAKeyTemplate[3] = {
+CK_ATTRIBUTE publicRSAKeyTemplate[] = {
     {CKA_KEY_TYPE, &keyType, sizeof keyType},
+    {CKA_TOKEN, &tr, sizeof tr},
 	{CKA_ENCRYPT, &tr, sizeof(tr)},
 	{CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)}
 };
-CK_ULONG publicRSAKeyTemplateLength = 3;
+CK_ULONG publicRSAKeyTemplateLength = sizeof publicRSAKeyTemplate / sizeof *publicRSAKeyTemplate;
 
 CK_ATTRIBUTE privateRSAKeyTemplate[] = {
     {CKA_KEY_TYPE, &keyType, sizeof keyType},
@@ -68,7 +69,7 @@ CK_ATTRIBUTE privateRSAKeyTemplate[] = {
 	{CKA_SENSITIVE, &tr, sizeof(tr)},
 	{CKA_DECRYPT, &tr, sizeof(tr)},
 };
-CK_ULONG privateRSAKeyTemplateLength = 7;
+CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplate / sizeof *privateRSAKeyTemplate;;
 
 void printhex(const char *s, unsigned char *buf, unsigned long length){
     int i;
@@ -159,7 +160,7 @@ int main(int argc, char *argv[]) {
     PKCS11_CALL(
         C_GenerateKeyPair,
         session,
-        &mechanismGen, 
+        &mechanismGen,
         publicRSAKeyTemplate, publicRSAKeyTemplateLength,
         privateRSAKeyTemplate, privateRSAKeyTemplateLength,
         &hPublicKey, &hPrivateKey);
@@ -184,6 +185,24 @@ int main(int argc, char *argv[]) {
         printf("ERROR: resLength=%lu\n", resLength);
         printhex("Buffer", res, resLength);
     }
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_BBOOL token = true;
+    CK_ATTRIBUTE findTemplate[] = {
+        { CKA_CLASS, &keyClass, sizeof(keyClass) },
+        { CKA_TOKEN, &token, sizeof(token) }
+    };
+    PKCS11_CALL(C_FindObjectsInit, session, findTemplate, sizeof findTemplate / sizeof *findTemplate);
+    CK_ULONG pullCount;
+    PKCS11_CALL(C_FindObjects, session, NULL, 0, &pullCount);
+    cout << "Found " << pullCount << " private key objects, handles:\n";
+    CK_OBJECT_HANDLE *oh = (CK_OBJECT_HANDLE *)malloc(sizeof *oh * pullCount);
+    PKCS11_CALL(C_FindObjects, session, oh, pullCount, &pullCount);
+    PKCS11_CALL(C_FindObjectsFinal, session);
+    for (i=0; i<(int)pullCount; i++) {
+        //PKCS11_CALL(C_DestroyObject, session, oh[i]);
+        printf("\t [%i] %lu\n", i, oh[i]);
+    }
     PKCS11_CALL(C_CloseSession, session);
+    PKCS11_CALL(C_Finalize, NULL);
     return 0;
 }
