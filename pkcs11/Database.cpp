@@ -13,12 +13,12 @@
 
 #define CREATE_DB \
 	"CREATE TABLE RootKey(value BLOB);" \
-	"CREATE TABLE Object(id INTEGER NOT NULL PRIMARY KEY, objectClass INTEGER, value BLOB);" \
+	"CREATE TABLE Object(ID INTEGER NOT NULL PRIMARY KEY, objectClass INTEGER, value BLOB);" \
 	"CREATE TABLE Attribute(" \
-         "id INTEGER" \
+         "ID INTEGER" \
          ", attributeType INTEGER" \
          ", value BLOB" \
-         ", objectId INTEGER REFERENCES Object(id)" \
+         ", objectID INTEGER REFERENCES Object(id)" \
     ");"
 
 
@@ -72,23 +72,15 @@ uint8_t *Database::GetRootKey(size_t *rootKeyLength) {
 
 int Database::deleteObject(CK_OBJECT_HANDLE hObject) {
     int ret = -1;
-    int rc;
-	sqlite3_stmt *pStmt = NULL;
-    char sql[] = "DELETE FROM Attribute WHERE objectId=?";
-    if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql, -1, &pStmt, NULL))
+    std::string s = std::to_string(hObject);
+    std::string sql = \
+        "DELETE FROM Object WHERE id=" + s + ";" 
+        "DELETE FROM Attribute WHERE objectID=" + s + ";";
+
+    if (SQLITE_OK != sqlite3_exec(this->db, sql.c_str(), 0, 0, NULL))
         goto deleteObject_err;
-    ret -= 1;
-    if (SQLITE_OK != sqlite3_bind_int(pStmt, 1, (int)hObject))
-        goto deleteObject_err;
-    //printf("%s\n", sqlite3_expanded_sql(pStmt));
-    ret -= 1;
-    rc = sqlite3_step(pStmt);
-    if (rc != SQLITE_DONE) {
-        goto deleteObject_err;
-    }
     ret = 0;
 deleteObject_err:
-    if (pStmt) sqlite3_finalize(pStmt);
     return ret;
 }
 
@@ -96,28 +88,47 @@ int Database::getObject(CK_OBJECT_HANDLE hObject, uint8_t **ppValue, size_t& val
     int rc;
     int res = -1;
 	sqlite3_stmt *pStmt = NULL;
-    std::string sql = "SELECT Object.value FROM Object where id=?";
     CK_ATTRIBUTE *pAttribute = NULL;
+    const char *sql = "SELECT value FROM Object WHERE ID=?";
 
-    if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql.c_str(), -1, &pStmt, NULL)) {
+    if (ppValue == NULL || ppAttribute == NULL)
+        goto getObject_err;
+    res -= 1;
+    if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql, -1, &pStmt, NULL)) {
         goto getObject_err;
     }
-    printf("%s\n", sqlite3_expanded_sql(pStmt));
-    if (SQLITE_ROW == sqlite3_step(pStmt))
+    res -= 1;
+    if (SQLITE_OK != sqlite3_bind_int(pStmt, 1, (int) hObject)) {
         goto getObject_err;
-    if (SQLITE_OK != sqlite3_bind_int(pStmt, 1, (int) hObject))
+    }
+    res -= 1;
+
+    if (SQLITE_ROW != (rc = sqlite3_step(pStmt))) {
         goto getObject_err;
+    }
+    res -= 1;
+    valueLen = sqlite3_column_bytes(pStmt, 0);
+    if (NULL == (*ppValue = (CK_BYTE *)malloc(valueLen))) {
+        goto getObject_err;
+    }
+    res -= 1;
+    memcpy(*ppValue, sqlite3_column_blob(pStmt,0), valueLen);
+    res -= 1;
     sqlite3_finalize(pStmt);
-    sql = "SELECT type, value, FROM Attribute WHERE id=? ORDER BY id";
-    if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql.c_str(), -1, &pStmt, NULL)) {
+    sql = "SELECT attributeType, value FROM Attribute WHERE objectID=? ORDER BY id";
+    if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql, -1, &pStmt, NULL)) {
+        goto getObject_err;
+    }
+    res -= 1;
+    if (SQLITE_OK != sqlite3_bind_int(pStmt, 1, (int) hObject)) {
         goto getObject_err;
     }
     ulAttrCount = 0;
     while (SQLITE_ROW == (rc = sqlite3_step(pStmt))){
         ulAttrCount++;
-        CK_ATTRIBUTE *pAttr;
+        CK_ATTRIBUTE *pAttr=NULL;
         pAttribute = (CK_ATTRIBUTE *)realloc(pAttribute, sizeof *pAttribute * ulAttrCount);
-        pAttr = (*ppAttribute) + ulAttrCount - 1;
+        pAttr = pAttribute + (ulAttrCount - 1);
         pAttr->type = sqlite3_column_int(pStmt, 0);
         pAttr->ulValueLen = sqlite3_column_bytes(pStmt, 1);
         if (NULL == (pAttr->pValue = (CK_BYTE *)malloc(pAttr->ulValueLen))) {
@@ -142,28 +153,34 @@ CK_OBJECT_HANDLE *Database::getObjectIds(CK_ATTRIBUTE *pTemplate, CK_ULONG ulCou
 
     nrFound = -1;
 	sqlite3_stmt *pStmt = NULL;
-    std::string sql = "SELECT Object.id,COUNT(Object.id) FROM Object JOIN Attribute ON Object.id=objectId ";
-    for (CK_ULONG i=0; i<ulCount; i++) {
-        if (i==0)
-            sql.append(" WHERE ");
-        else
-            sql.append(" OR ");
-        sql.append(" (AttributeType=?  AND Attribute.value=?) ");
-    }
-    sql.append(" GROUP BY Object.id");
-    sql.append(" HAVING COUNT(Object.id) = ?");
-    if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql.c_str(), -1, &pStmt, NULL)) {
-        goto getObjectIds_err;
-    }
-    for (i=0; i<ulCount; i++) {
-        if (SQLITE_OK != sqlite3_bind_int(pStmt, (i * 2) + 1, pTemplate[i].type))
+    if (NULL == pTemplate) {
+        std::string sql = "SELECT ID FROM Object";
+        if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql.c_str(), -1, &pStmt, NULL)) {
             goto getObjectIds_err;
-        if (SQLITE_OK != sqlite3_bind_blob(pStmt, (i *2) + 2, pTemplate[i].pValue, pTemplate[i].ulValueLen, SQLITE_STATIC))
+        }
+    } else {
+        std::string sql = "SELECT Object.id,COUNT(Object.id) FROM Object JOIN Attribute ON Object.id=objectID ";
+        for (CK_ULONG i=0; i<ulCount; i++) {
+            if (i==0)
+                sql.append(" WHERE ");
+            else
+                sql.append(" OR ");
+            sql.append(" (AttributeType=?  AND Attribute.value=?) ");
+        }
+        sql.append(" GROUP BY Object.id");
+        sql.append(" HAVING COUNT(Object.id) = ?");
+        if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql.c_str(), -1, &pStmt, NULL)) {
+            goto getObjectIds_err;
+        }
+        for (i=0; i<ulCount; i++) {
+            if (SQLITE_OK != sqlite3_bind_int(pStmt, (i * 2) + 1, pTemplate[i].type))
+                goto getObjectIds_err;
+            if (SQLITE_OK != sqlite3_bind_blob(pStmt, (i *2) + 2, pTemplate[i].pValue, pTemplate[i].ulValueLen, SQLITE_STATIC))
+                goto getObjectIds_err;
+        }
+        if (SQLITE_OK != sqlite3_bind_int(pStmt, (i * 2) + 1, ulCount))
             goto getObjectIds_err;
     }
-    if (SQLITE_OK != sqlite3_bind_int(pStmt, (i * 2) + 1, ulCount))
-        goto getObjectIds_err;
-    // printf("%s\n", sqlite3_expanded_sql(pStmt));
 
     while (SQLITE_ROW == (rc = sqlite3_step(pStmt))){
         found++;
@@ -172,7 +189,6 @@ CK_OBJECT_HANDLE *Database::getObjectIds(CK_ATTRIBUTE *pTemplate, CK_ULONG ulCou
            goto getObjectIds_err;
         }
         res[found - 1] = (CK_OBJECT_HANDLE) sqlite3_column_int(pStmt, 0);
-        printf("%lu\n", res[found - 1]);
     }
     if (SQLITE_DONE != rc) {
         if (res) free(res);
@@ -186,24 +202,29 @@ getObjectIds_err:
 
 
 int Database::setObject(CK_KEY_TYPE type, CK_BYTE_PTR pValue, CK_ULONG ulValueLen, CK_ATTRIBUTE *pAttribute, CK_ULONG ulAttributeCount) {
-    bool rollback = false;
+    bool rollback = true;
 	sqlite3_stmt *pStmt, *pStmtA = NULL;
     rollback = true;
     char sql[] = "INSERT INTO Object(objectClass, value) VALUES(?, ?);";
-    char sqlA[] = "INSERT INTO Attribute(id, attributeType, value, objectId) VALUES(?,?,?,?);";
+    char sqlA[] = "INSERT INTO Attribute(ID, attributeType, value, objectID) VALUES(?,?,?,?);";
     int ret = -1, id;
     CK_ULONG i;
     int rc;
     if (SQLITE_OK != sqlite3_exec(db, "BEGIN", 0, 0, 0))
         goto setObject_err;
+    ret -=1;
     if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql, -1, &pStmt, NULL))
         goto setObject_err;
+    ret -=1;
     if (SQLITE_OK != sqlite3_bind_int(pStmt, 1, type))
         goto setObject_err;
+    ret -=1;
     if (SQLITE_OK != sqlite3_bind_blob(pStmt, 2, pValue, ulValueLen, SQLITE_STATIC))
         goto setObject_err;
+    ret -=1;
     if (SQLITE_DONE != (rc = sqlite3_step(pStmt)))
         goto setObject_err;
+    ret -=1;
     id = sqlite3_last_insert_rowid(this->db);
     for  (i=0; i<ulAttributeCount; i++, pAttribute++) {
         if (SQLITE_OK != sqlite3_prepare_v2(this->db, sqlA, -1, &pStmtA, NULL))
@@ -221,7 +242,7 @@ int Database::setObject(CK_KEY_TYPE type, CK_BYTE_PTR pValue, CK_ULONG ulValueLe
         sqlite3_finalize(pStmtA);
         pStmtA = NULL;
     }
-    sqlite3_exec(db, "COMMIT", 0, 0, 0);
+    sqlite3_exec(db, "COMMIT;", 0, 0, 0);
     rollback = false;
     ret = id;
 setObject_err:

@@ -69,19 +69,12 @@ void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLeng
 	*pPrivateKey = (uint8_t *)realloc(*pPrivateKey, *pPrivateKeyLength);
 }
 
-void CryptoEntity::RSAInitEncrypt(uint8_t* key, size_t length) {
-	this->initializedKey.value = key;
-	this->initializedKey.length = length;
-}
-
-
-
-unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
+unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
 	sgx_status_t ret;
 	unsigned char* cipherData = (unsigned char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(unsigned char));
     int retval;
 
-	ret = SGXEncryptRSA(this->enclave_id_, &retval, this->initializedKey.value, this->initializedKey.length,
+	ret = SGXEncryptRSA(this->enclave_id_, &retval, key, keyLength,
 		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
 
 	if (ret != SGX_SUCCESS || retval != 0) {
@@ -91,13 +84,7 @@ unsigned char* CryptoEntity::RSAEncrypt(const unsigned char* plainData, size_t p
 	return cipherData;
 }
 
-void CryptoEntity::RSAInitDecrypt(uint8_t *key, size_t length) {
-	this->initializedKey.value = key;
-	this->initializedKey.length = length;
-}
-
-
-uint8_t* CryptoEntity::RSADecrypt(const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
+uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
 	sgx_status_t stat;
     int max_rsa_size = 8 * 1024;
 
@@ -106,11 +93,11 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t* cipherData, size_t cipherDataLe
 	stat = SGXDecryptRSA(
             this->enclave_id_,
             &retval,
-			this->initializedKey.value, this->initializedKey.length,
+			key, keyLength,
 			cipherData, cipherDataLength,
 			plainData, max_rsa_size, plainLength);
 	if (stat != SGX_SUCCESS || retval != 0) {
-		fprintf(stderr, "Error %i\n", retval);
+		fprintf(stderr, "Error: %s:%i %i\n", __FILE__, __LINE__, retval);
 		throw std::runtime_error("Decryption failed\n");
     }
 	return plainData;

@@ -47,6 +47,8 @@ typedef struct pkcs11_session {
         CK_OBJECT_HANDLE_PTR  hObject;
         CK_ULONG ulObjectCount;
     } FindObject;
+    pkcs11_object_t Encrypt;
+    pkcs11_object_t Decrypt;
     CK_OBJECT_HANDLE handle;
     PKCS_OPERATION operation;
 } pkcs11_session_t;
@@ -400,11 +402,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetObjectSize)(CK_SESSION_HANDLE hSession, CK_OBJECT
 CK_DEFINE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	return CKR_FUNCTION_NOT_SUPPORTED;
 
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	return CKR_OK;
+	return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
 
@@ -428,8 +431,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsInit)(CK_SESSION_HANDLE hSession, CK_ATTR
     s->operation = PKCS11_CK_OPERATION_FIND;
     int nrItems = 0;
     s->FindObject.hObject = db->getObjectIds(pTemplate, ulCount, nrItems);
-    printf("hObject=%p\n", s->FindObject.hObject);
-    printf("nrItems=%i\n", nrItems);
+    printf("%s:%i nrItems=%i\n", __FILE__, __LINE__, nrItems);
     if (nrItems < 0) {
         return CKR_DEVICE_ERROR;
     }
@@ -466,13 +468,26 @@ CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsFinal)(CK_SESSION_HANDLE hSession)
     if (NULL == (s = get_session(hSession))) return CKR_SESSION_HANDLE_INVALID;
 
     if (s->FindObject.hObject) free(s->FindObject.hObject);
+    s->FindObject.hObject = NULL;
     s->FindObject.ulObjectCount = 0;
 
     if (PKCS11_CK_OPERATION_FIND != s->operation) {
         return CKR_OPERATION_NOT_INITIALIZED;
     }
+    s->operation = PKCS11_CK_OPERATION_NONE;
 	return CKR_OK;
 }
+
+void printhex(const char *s, unsigned char *buf, unsigned long length){
+    int i;
+    printf("%s", s);
+    for (i=0; i< (int)length; i++) {
+        if ((i % 16) == 0) printf("\n");
+        printf("%02X ", buf[i]);
+    }
+    printf("\n");
+}
+
 
 CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
@@ -499,10 +514,15 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 		return CKR_MECHANISM_INVALID;
 	}
 
+    pkcs11_object_t *o = &s->Encrypt;
+    if (o->pValue) free(o->pValue);
+    if (o->pAttributes) free(o->pAttributes);
+    memset(o, 0, sizeof *o);
+    int rc;
+    if (0 > (rc =db->getObject(hKey, &o->pValue, o->valueLength, &o->pAttributes, o->ulAttributeCount))) {
+        return CKR_DEVICE_ERROR;
+    }
 	s->operation = PKCS11_CK_OPERATION_ENCRYPT;
-
-	pkcs11_object_t *pub = (pkcs11_object_t *)hKey;
-	crypto->RSAInitEncrypt(pub->pValue, pub->valueLength);
 	return CKR_OK;
 }
 
@@ -530,7 +550,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 
 	try {
         CK_ULONG len;
-        CK_BYTE_PTR res = crypto->RSAEncrypt((const uint8_t *)pData, (size_t)ulDataLen, (size_t*)&len);
+        CK_BYTE_PTR res = crypto->RSAEncrypt(
+            s->Encrypt.pValue, s->Encrypt.valueLength, (const uint8_t *)pData, (size_t)ulDataLen, (size_t*)&len);
         if (len > *pulEncryptedDataLen) {
             free(res);
             return CKR_ARGUMENTS_BAD;
@@ -583,8 +604,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 		return CKR_MECHANISM_INVALID;
 	}
 
-	pkcs11_object_t *priv = (pkcs11_object_t *)hKey;
-	crypto->RSAInitDecrypt(priv->pValue, priv->valueLength);
+
+    pkcs11_object_t *o = &s->Decrypt;
+    if (db->getObject(hKey, &o->pValue, o->valueLength, &o->pAttributes, o->ulAttributeCount)) {
+        return CKR_DEVICE_ERROR;
+    }
+
 	s->operation = PKCS11_CK_OPERATION_DECRYPT;
 
 	return CKR_OK;
@@ -611,7 +636,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 
 	try {
         CK_ULONG resLength;
-		CK_BYTE_PTR res = crypto->RSADecrypt((const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
+		CK_BYTE_PTR res = crypto->RSADecrypt(s->Decrypt.pValue, s->Decrypt.valueLength, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
         if (res == NULL) {
             return CKR_DEVICE_ERROR;
         }
@@ -855,18 +880,21 @@ CK_RV GenerateKeyPairRSA(
 
     pub->pValue = publicKey;
     pub->valueLength = publicKeyLength;
-    *phPublicKey = (CK_ULONG)pub;
 
     pro->pValue = privateKey;
     pro->valueLength = privateKeyLength;
-    *phPrivateKey = (CK_ULONG)pro;
 
-    if (0 > db->setObject(CKO_PRIVATE_KEY, pro->pValue, pro->valueLength, pro->pAttributes, pro->ulAttributeCount)) {
+    int privHandle;
+    if (0 > (privHandle = db->setObject(CKO_PRIVATE_KEY, pro->pValue, pro->valueLength, pro->pAttributes, pro->ulAttributeCount))) {
+
         return CKR_DEVICE_ERROR;
     }
-    if (0 > db->setObject(CKO_PUBLIC_KEY, pub->pValue, pub->valueLength, pub->pAttributes, pub->ulAttributeCount)) {
+    *phPrivateKey = (CK_ULONG)privHandle;
+    int pubHandle;
+    if (0 > (pubHandle = db->setObject(CKO_PUBLIC_KEY, pub->pValue, pub->valueLength, pub->pAttributes, pub->ulAttributeCount))) {
         return CKR_DEVICE_ERROR;
     }
+    *phPublicKey = (CK_ULONG)pubHandle;
 	return ret;
 }
 

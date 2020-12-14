@@ -99,10 +99,12 @@ int main(int argc, char *argv[]) {
 		CKM_RSA_PKCS_KEY_PAIR_GEN, NULL_PTR, 0
 	};
     int opt;
+    bool delete_objects_after = false;
 
-    while ((opt = getopt(argc,argv,"v")) != EOF){
+    while ((opt = getopt(argc,argv,"vc")) != EOF){
         switch (opt) {
             case 'v': verbose=1; break;
+            case 'c': delete_objects_after=true; break;
             case '?': USAGE; return 1;
             default: cout<<endl; abort();
         }
@@ -164,6 +166,7 @@ int main(int argc, char *argv[]) {
         publicRSAKeyTemplate, publicRSAKeyTemplateLength,
         privateRSAKeyTemplate, privateRSAKeyTemplateLength,
         &hPublicKey, &hPrivateKey);
+
 	CK_MECHANISM mechanismRSA = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	PKCS11_CALL(C_EncryptInit, session, &mechanismRSA, hPublicKey);
     CK_BYTE clearText[] = { 0x11, 0x2 };
@@ -195,12 +198,18 @@ int main(int argc, char *argv[]) {
     CK_ULONG pullCount;
     PKCS11_CALL(C_FindObjects, session, NULL, 0, &pullCount);
     cout << "Found " << pullCount << " private key objects, handles:\n";
-    CK_OBJECT_HANDLE *oh = (CK_OBJECT_HANDLE *)malloc(sizeof *oh * pullCount);
-    PKCS11_CALL(C_FindObjects, session, oh, pullCount, &pullCount);
     PKCS11_CALL(C_FindObjectsFinal, session);
-    for (i=0; i<(int)pullCount; i++) {
-        //PKCS11_CALL(C_DestroyObject, session, oh[i]);
-        printf("\t [%i] %lu\n", i, oh[i]);
+    if (true == delete_objects_after) {
+        cout << "Cleaning up all objects on token:" << endl;
+        PKCS11_CALL(C_FindObjectsInit, session, NULL, 0);
+        PKCS11_CALL(C_FindObjects, session, NULL, 0, &pullCount);
+        CK_OBJECT_HANDLE *oh = (CK_OBJECT_HANDLE *)malloc(sizeof *oh * pullCount);
+        PKCS11_CALL(C_FindObjects, session, oh, pullCount, &pullCount);
+        PKCS11_CALL(C_FindObjectsFinal, session);
+        for (i=0; i<(int)pullCount; i++) {
+            PKCS11_CALL(C_DestroyObject, session, oh[i]);
+            printf("\t [%i] %lu\n", i, oh[i]);
+        }
     }
     PKCS11_CALL(C_CloseSession, session);
     PKCS11_CALL(C_Finalize, NULL);
