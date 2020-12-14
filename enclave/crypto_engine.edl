@@ -1,5 +1,5 @@
 enclave {
-    
+
 from "sgx_tsgxssl.edl" import *;
 
 	trusted {
@@ -27,13 +27,15 @@ from "sgx_tsgxssl.edl" import *;
 		public int SGXDecryptRSA(
             [in, readonly, count=private_key_ciphered_length]const unsigned char* private_key_ciphered,
             size_t private_key_ciphered_length,
+            [in, readonly, count=private_key_ciphered_length]const unsigned char* attributes,
+            size_t attributes_length,
             [in, readonly, count=ciphertext_length]const unsigned char* ciphertext, 
             size_t ciphertext_length,
             [out, count=plaintext_length]unsigned char* plaintext,
             size_t plaintext_length,
             [user_check]size_t* plainTextLength
 		);
-        
+
         // Root Key Handling functions....
         public int SGXGenerateRootKey(
             [out, count=root_key_length] uint8_t *rootkeySealed,

@@ -166,7 +166,16 @@ CK_DEFINE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetInfo)(CK_INFO_PTR pInfo)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	pInfo->cryptokiVersion.major = 1;
+    pInfo->cryptokiVersion.minor = 0;
+	memset(pInfo->manufacturerID, 0, sizeof *pInfo->manufacturerID);
+    memcpy(pInfo->manufacturerID, "ACME", 4);
+	pInfo->flags = 0;
+	memset(pInfo->libraryDescription, 0, sizeof *pInfo->libraryDescription);
+    memcpy(pInfo->libraryDescription, "SGX PKCS11", 10);
+	pInfo->libraryVersion.major = 1;
+    pInfo->libraryVersion.minor = 0;
+	return CKR_OK;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetSlotList)(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount)
@@ -318,7 +327,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_CloseSession)(CK_SESSION_HANDLE hSession)
 
 CK_DEFINE_FUNCTION(CK_RV, C_CloseAllSessions)(CK_SLOT_ID slotID)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    std::map<CK_SESSION_HANDLE, pkcs11_session_t>::iterator it;
+
+    for (it=sessions.begin(); it != sessions.end();) {
+        sessions.erase(it++);
+    }
+	return CKR_OK;
 }
 
 
@@ -431,7 +445,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsInit)(CK_SESSION_HANDLE hSession, CK_ATTR
     s->operation = PKCS11_CK_OPERATION_FIND;
     int nrItems = 0;
     s->FindObject.hObject = db->getObjectIds(pTemplate, ulCount, nrItems);
-    printf("%s:%i nrItems=%i\n", __FILE__, __LINE__, nrItems);
     if (nrItems < 0) {
         return CKR_DEVICE_ERROR;
     }
@@ -636,7 +649,11 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 
 	try {
         CK_ULONG resLength;
-		CK_BYTE_PTR res = crypto->RSADecrypt(s->Decrypt.pValue, s->Decrypt.valueLength, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
+        uint8_t *serialized_attr;
+        size_t attrLen;
+        serialized_attr = attributeSerialize(s->Decrypt.pAttributes, s->Decrypt.ulAttributeCount, &attrLen);
+
+		CK_BYTE_PTR res = crypto->RSADecrypt(s->Decrypt.pValue, s->Decrypt.valueLength, serialized_attr, attrLen, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
         if (res == NULL) {
             return CKR_DEVICE_ERROR;
         }
@@ -860,14 +877,14 @@ CK_RV GenerateKeyPairRSA(
 			{ CKA_PRIVATE, &tr, sizeof tr },
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
-        serialized_attr = attributeSerialize(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, &attrLen);
-
 		pro = (pkcs11_object_t *)malloc(sizeof *pro);
 		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
     } else {
 		// For now session objects not supported
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
+    serialized_attr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &attrLen);
+
 
 
 	try {

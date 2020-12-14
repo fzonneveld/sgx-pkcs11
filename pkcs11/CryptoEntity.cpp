@@ -84,7 +84,7 @@ unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, co
 	return cipherData;
 }
 
-uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
+uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
 	sgx_status_t stat;
     int max_rsa_size = 8 * 1024;
 
@@ -94,6 +94,7 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, const ui
             this->enclave_id_,
             &retval,
 			key, keyLength,
+            pAttribute, attributeLen,
 			cipherData, cipherDataLength,
 			plainData, max_rsa_size, plainLength);
 	if (stat != SGX_SUCCESS || retval != 0) {
@@ -135,7 +136,6 @@ int CryptoEntity::RestoreRootKey(uint8_t *rootKeySealed, size_t rootKeySealedLen
 	}
     return 0;
 }
-
 
 CryptoEntity::~CryptoEntity() {
 	sgx_destroy_enclave(this->enclave_id_);

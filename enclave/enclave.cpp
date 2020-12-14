@@ -70,7 +70,6 @@ getRSAder_good:
     return ret;
 }
 
-
 int SGXgenerateRSAKeyPair(
         uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
         uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
@@ -83,6 +82,8 @@ int SGXgenerateRSAKeyPair(
     uint8_t *pPrivateKeyDER = NULL, *pPublicKeyDER = NULL;
 
     if (rootKeySet == CK_FALSE) return ret;
+
+    // Check attributes...
 
 	if ((rsa_key = generateRSA(bitLen, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err;
 	ret = -2;
@@ -98,14 +99,13 @@ int SGXgenerateRSAKeyPair(
 
 	if (SGX_SUCCESS != sgx_rijndael128GCM_encrypt(
 		(sgx_aes_gcm_128bit_key_t *) rootKey,
-		pPrivateKeyDER, privateKeyDERlength, 
+		pPrivateKeyDER, privateKeyDERlength,
 		RSAPrivateKey + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
 		RSAPrivateKey + SGX_AESGCM_MAC_SIZE,
 		SGX_AESGCM_IV_SIZE,
-		//pSerialAttr, serialAttrLen,
-		NULL, 0,
+		pSerialAttr, serialAttrLen,
 		(sgx_aes_gcm_128bit_tag_t *) (RSAPrivateKey))) goto generateRSAKeyPair_err;
-	
+
     *RSAPublicKeyLengthOut = publicKeyLength;
     *RSAPrivateKeyLengthOut = privateKeyDERlength + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE;
     memcpy(RSAPublicKey, pPublicKeyDER, publicKeyLength);
@@ -147,6 +147,8 @@ SGXEncryptRSA_err:
 int SGXDecryptRSA(
         const uint8_t *private_key_ciphered,
         size_t private_key_ciphered_length,
+        const uint8_t *attributes,
+        size_t attributes_length,
         const uint8_t* ciphertext,
         size_t ciphertext_length,
         uint8_t* plaintext,
@@ -177,7 +179,7 @@ int SGXDecryptRSA(
 		private_key_der,
 		private_key_ciphered + SGX_AESGCM_MAC_SIZE,
 		SGX_AESGCM_IV_SIZE,
-		NULL, 0,
+		attributes, attributes_length,
 		(sgx_aes_gcm_128bit_tag_t *) private_key_ciphered)) goto SGXDecryptRSA_err;
 	ret  = -3;
 	endptr = (const uint8_t *) private_key_der;

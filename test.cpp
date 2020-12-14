@@ -136,6 +136,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     PKCS11_CALL(C_Initialize, NULL);
+    CK_INFO info;
+    PKCS11_CALL(C_GetInfo, &info);
     CK_ULONG pulCount;
     PKCS11_CALL(C_GetSlotList, CK_TRUE, NULL, &pulCount);
     CK_SLOT_ID *slots = (CK_SLOT_ID *) malloc(sizeof *slots * pulCount);
@@ -197,7 +199,7 @@ int main(int argc, char *argv[]) {
     PKCS11_CALL(C_FindObjectsInit, session, findTemplate, sizeof findTemplate / sizeof *findTemplate);
     CK_ULONG pullCount;
     PKCS11_CALL(C_FindObjects, session, NULL, 0, &pullCount);
-    cout << "Found " << pullCount << " private key objects, handles:\n";
+    cout << "Found " << pullCount << " private key object handles\n";
     PKCS11_CALL(C_FindObjectsFinal, session);
     if (true == delete_objects_after) {
         cout << "Cleaning up all objects on token:" << endl;
@@ -211,7 +213,8 @@ int main(int argc, char *argv[]) {
             printf("\t [%i] %lu\n", i, oh[i]);
         }
     }
-    PKCS11_CALL(C_CloseSession, session);
+    PKCS11_CALL(C_CloseAllSessions, slots[0]);
+    //PKCS11_CALL(C_CloseSession, session);
     PKCS11_CALL(C_Finalize, NULL);
     return 0;
 }
