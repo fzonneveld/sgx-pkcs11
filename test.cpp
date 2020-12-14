@@ -158,6 +158,8 @@ int main(int argc, char *argv[]) {
         }
     }
     PKCS11_CALL(C_OpenSession, slots[0], CKF_SERIAL_SESSION, (CK_VOID_PTR) NULL, NULL, &session);
+    uint8_t random[16];
+    PKCS11_CALL(C_GenerateRandom, session, random, sizeof *random);
     printf("Generating RSA key...\n");
     CK_OBJECT_HANDLE hPublicKey = (CK_OBJECT_HANDLE)NULL;
     CK_OBJECT_HANDLE hPrivateKey = (CK_OBJECT_HANDLE)NULL;

@@ -24,6 +24,7 @@ public:
     uint8_t* RSAEncrypt(const uint8_t *key, size_t keyLength, const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength);
 	uint8_t* RSADecrypt(const uint8_t *key, size_t keyLength, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength);
     uint8_t* RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength);
+    int GenerateRandom(uint8_t *random, size_t random_length);
     size_t GetSealedRootKeySize();
     int GenerateRootKey(uint8_t *rootKeySealed, size_t *rootKeySealedLength);
     int RestoreRootKey(uint8_t *rootKeySealed, size_t rootKeySealedLength);

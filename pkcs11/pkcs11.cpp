@@ -989,13 +989,26 @@ CK_DEFINE_FUNCTION(CK_RV, C_DeriveKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_
 
 CK_DEFINE_FUNCTION(CK_RV, C_SeedRandom)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSeed, CK_ULONG ulSeedLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_GenerateRandom)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR RandomData, CK_ULONG ulRandomLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (NULL == RandomData) return CKR_ARGUMENTS_BAD;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+    if (crypto->GenerateRandom(RandomData, ulRandomLen)) {
+        return CKR_DEVICE_ERROR;
+    }
+	return CKR_OK;
 }
 
 

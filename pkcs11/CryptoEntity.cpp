@@ -98,10 +98,25 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t 
 			cipherData, cipherDataLength,
 			plainData, max_rsa_size, plainLength);
 	if (stat != SGX_SUCCESS || retval != 0) {
-		fprintf(stderr, "Error: %s:%i %i\n", __FILE__, __LINE__, retval);
 		throw std::runtime_error("Decryption failed\n");
     }
 	return plainData;
+}
+
+int CryptoEntity::GenerateRandom(uint8_t *random, size_t random_length) {
+	sgx_status_t stat;
+    int retval;
+
+    printf("%s:%i\n", __FILE__, __LINE__);
+	stat = SGXGenerateRandom(
+            this->enclave_id_,
+            &retval,
+			random, random_length);
+	if (stat != SGX_SUCCESS || retval != 0) {
+        printf("%s:%ii retval=%i\n", __FILE__, __LINE__, retval);
+		throw std::runtime_error("Generate random failed");
+    }
+    return 0;
 }
 
 size_t CryptoEntity::GetSealedRootKeySize() {

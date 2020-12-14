@@ -36,6 +36,11 @@ from "sgx_tsgxssl.edl" import *;
             [user_check]size_t* plainTextLength
 		);
 
+        public int SGXGenerateRandom(
+            [out, count=random_length]unsigned char* random,
+            size_t random_length
+        );
+
         // Root Key Handling functions....
         public int SGXGenerateRootKey(
             [out, count=root_key_length] uint8_t *rootkeySealed,

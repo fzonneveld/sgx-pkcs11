@@ -202,6 +202,15 @@ SGXDecryptRSA_err:
     return ret;
 }
 
+
+int SGXGenerateRandom(uint8_t *random, size_t random_length){
+    int ret = -1;
+	if (SGX_SUCCESS != sgx_read_rand(random, random_length)) goto generateRandom_err;
+generateRandom_err:
+    ret = 0;
+    return ret;
+}
+
 size_t SGXGetSealedRootKeySize(){
     return sizeof(sgx_sealed_data_t) + ROOTKEY_LENGTH;
 }
