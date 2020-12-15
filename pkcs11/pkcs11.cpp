@@ -166,15 +166,15 @@ CK_DEFINE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetInfo)(CK_INFO_PTR pInfo)
 {
-	pInfo->cryptokiVersion.major = 1;
+	pInfo->cryptokiVersion.major = 2;
     pInfo->cryptokiVersion.minor = 0;
 	memset(pInfo->manufacturerID, 0, sizeof *pInfo->manufacturerID);
     memcpy(pInfo->manufacturerID, "ACME", 4);
 	pInfo->flags = 0;
 	memset(pInfo->libraryDescription, 0, sizeof *pInfo->libraryDescription);
     memcpy(pInfo->libraryDescription, "SGX PKCS11", 10);
-	pInfo->libraryVersion.major = 1;
-    pInfo->libraryVersion.minor = 0;
+	pInfo->libraryVersion.major = 2;
+    pInfo->libraryVersion.minor = 1;
 	return CKR_OK;
 }
 
