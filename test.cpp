@@ -16,6 +16,8 @@ using namespace std;
 #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
 #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
 
+#define SGX_LABEL "SGX Label"
+
 #ifndef NULL_PTR
 #define NULL_PTR 0
 #endif
@@ -100,9 +102,11 @@ int main(int argc, char *argv[]) {
 	};
     int opt;
     bool delete_objects_after = false;
+    char *SOpin = NULL;
 
-    while ((opt = getopt(argc,argv,"vc")) != EOF){
+    while ((opt = getopt(argc,argv,"vci:")) != EOF){
         switch (opt) {
+            case 'i': SOpin = optarg; break;
             case 'v': verbose=1; break;
             case 'c': delete_objects_after=true; break;
             case '?': USAGE; return 1;
@@ -142,6 +146,11 @@ int main(int argc, char *argv[]) {
     PKCS11_CALL(C_GetSlotList, CK_TRUE, NULL, &pulCount);
     CK_SLOT_ID *slots = (CK_SLOT_ID *) malloc(sizeof *slots * pulCount);
     PKCS11_CALL(C_GetSlotList, CK_TRUE, slots, &pulCount);
+    if (NULL != SOpin) {
+        uint8_t label[32] = {0};
+        memcpy(label, SGX_LABEL, strlen(SGX_LABEL));
+        PKCS11_CALL(C_InitToken, slots[0], (uint8_t *)SOpin, strlen(SOpin), label);
+    }
     CK_SLOT_INFO pInfo;
     PKCS11_CALL(C_GetSlotInfo, slots[0], &pInfo);
     printf("slotDescription='%s'\n", pInfo.slotDescription);

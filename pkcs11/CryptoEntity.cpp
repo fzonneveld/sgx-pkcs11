@@ -107,7 +107,6 @@ int CryptoEntity::GenerateRandom(uint8_t *random, size_t random_length) {
 	sgx_status_t stat;
     int retval;
 
-    printf("%s:%i\n", __FILE__, __LINE__);
 	stat = SGXGenerateRandom(
             this->enclave_id_,
             &retval,

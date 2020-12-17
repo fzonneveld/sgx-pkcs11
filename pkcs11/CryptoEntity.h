@@ -7,7 +7,6 @@
 #include "crypto_engine_u.h"
 #include "shared_values.h"
 
-
 class CryptoEntity {
 private:
 #ifdef _WIN32

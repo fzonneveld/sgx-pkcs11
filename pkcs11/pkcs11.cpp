@@ -3,6 +3,9 @@
 #include <map>
 #include <sys/types.h>
 #include <unistd.h>
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+
 #include "pkcs11-interface.h"
 
 #include "attribute.h"
@@ -32,13 +35,14 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
     return CKR_OK;
 }
 
+CK_SLOT_ID max_slots = -1;
+
 typedef struct pkcs11_object {
 	CK_ULONG ulAttributeCount;
 	CK_ATTRIBUTE_PTR pAttributes;
     uint8_t *pValue;
     size_t valueLength;
 } pkcs11_object_t;
-
 
 typedef struct pkcs11_session {
     CK_ULONG slotID;
@@ -55,8 +59,6 @@ typedef struct pkcs11_session {
 
 std::map<CK_SESSION_HANDLE, pkcs11_session_t> sessions;
 static CK_ULONG sessionHandleCnt = 0;
-
-static CK_ULONG nr_slots=0;
 
 static pkcs11_session_t *get_session(CK_SESSION_HANDLE handle) {
 
@@ -98,6 +100,37 @@ T GetEnv(const char *env_name, T default_value){
 const char *defaultRootkeyFile = DEFAULT_ROOT_KEY_FILE;
 const char defaultDBfileName[] = DEFAULT_DB_NAME;
 
+int sha256(const uint8_t *message, size_t message_len, uint8_t **digest, size_t& digest_len)
+{
+    EVP_MD_CTX *mdctx = NULL;
+    int ret = -1;
+
+    *digest = NULL;
+
+    if((mdctx = EVP_MD_CTX_new()) == NULL)
+        goto digestMessage_err;
+
+    if(1 != EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL))
+        goto digestMessage_err;
+
+    if(1 != EVP_DigestUpdate(mdctx, message, message_len))
+        goto digestMessage_err;
+
+    if((*digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(EVP_sha256()))) == NULL)
+        goto digestMessage_err;
+
+    unsigned int dlen;
+    if(1 != EVP_DigestFinal_ex(mdctx, *digest, &dlen))
+        goto digestMessage_err;
+    digest_len = dlen;
+    ret = 0;
+digestMessage_err:
+    if (*digest) free(*digest);
+    if (mdctx) EVP_MD_CTX_free(mdctx);
+    return ret;
+}
+
+
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
@@ -115,7 +148,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 	}
     // Set the slots, slots are simulated
     // Should be environment variable configurable
-    nr_slots = GetEnv<int>((const char *)"PKCS_SGX_NR_SLOTS", DEFAULT_NR_SLOTS);
+    max_slots =  GetEnv<int>((const char *)"PKCS_SGX_MAX_SLOTS", DEFAULT_NR_SLOTS);
     printf("Opening DB\n");
     const char *dbFileName = GetEnv<std::string>((const char *)"PKCS_DB_NAME", DEFAULT_DB_NAME).c_str();
 	try {
@@ -141,7 +174,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
         uint8_t *rootKey;
 
         printf("Using old database %s\n", defaultDBfileName);
-		if (NULL == (rootKey = db->GetRootKey(&rootKeyLength)))
+		if (NULL == (rootKey = db->GetRootKey(rootKeyLength)))
             return CKR_DEVICE_ERROR;
         try {
             if (crypto->RestoreRootKey(rootKey, rootKeyLength))
@@ -184,10 +217,10 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetSlotList)(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR p
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
     if (pSlotList == NULL) {
-        *pulCount = nr_slots;
+        *pulCount = max_slots;
         return CKR_OK;
     };
-    if (*pulCount > nr_slots) return CKR_SLOT_ID_INVALID;
+    if (*pulCount > max_slots) return CKR_SLOT_ID_INVALID;
     for (i=0; (CK_ULONG)i < *pulCount; i++) {
         pSlotList[i] = (CK_SLOT_ID) i;
     }
@@ -206,7 +239,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetSlotList)(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR p
 CK_DEFINE_FUNCTION(CK_RV, C_GetSlotInfo)(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (nr_slots <= slotID) return CKR_SLOT_ID_INVALID;
+    if (max_slots <= slotID) return CKR_SLOT_ID_INVALID;
 
     char s[64] = {0};
     sprintf(s, SLOT_DESCRIPTION, slotID);
@@ -245,7 +278,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismList)(CK_SLOT_ID slotID, CK_MECHANISM_TY
     CK_ULONG mechanismCount = sizeof mechanismList / sizeof *mechanismList;
 
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (nr_slots <= slotID) return CKR_SLOT_ID_INVALID;
+    if (max_slots <= slotID) return CKR_SLOT_ID_INVALID;
 
     if (pMechanismList == NULL) {
         *pulCount = mechanismCount;
@@ -273,15 +306,62 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismInfo)(CK_SLOT_ID slotID, CK_MECHANISM_TY
     }
 }
 
+void printhex(const char *s, unsigned char *buf, unsigned long length){
+    int i;
+    printf("%s", s);
+    for (i=0; i< (int)length; i++) {
+        if ((i % 16) == 0) printf("\n");
+        printf("%02X ", buf[i]);
+    }
+    printf("\n");
+}
+
+
 
 CK_DEFINE_FUNCTION(CK_RV, C_InitToken)(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen, CK_UTF8CHAR_PTR pLabel)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    CK_RV ret = CKR_DEVICE_ERROR;
+    if (NULL == pPin) return CKR_ARGUMENTS_BAD;
+    if (NULL == pLabel) return CKR_ARGUMENTS_BAD;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (max_slots <= slotID) return CKR_SLOT_ID_INVALID;
+
+    uint8_t *pL = NULL, *pS = NULL, *pU = NULL;
+    size_t labelLength, SOpinLength, userPinLength;
+    int rc;
+    uint8_t *pPinDigest = NULL;
+    size_t pinDigestLen;
+
+    if (0 != sha256(pPin, ulPinLen, &pPinDigest, pinDigestLen))
+        goto InitToken_err;
+    if (0 > (rc = db->getToken(slotID, &pL, labelLength, &pS, SOpinLength, &pU, userPinLength)))
+        goto InitToken_err;
+    if (rc == 0) {
+        pU = NULL;
+        userPinLength = 0;
+        labelLength = 32;
+        if (SQLITE_OK != db->initToken(slotID, pLabel, labelLength, pPinDigest, pinDigestLen, pU, userPinLength))
+            goto InitToken_err;
+    } else {
+        // Check passowrd
+        ret  = CKR_PIN_INCORRECT;
+        if (pinDigestLen != SOpinLength)
+            goto InitToken_err;
+        if (CRYPTO_memcmp(pPinDigest, pS, ulPinLen))
+            goto InitToken_err;
+        if (SQLITE_OK != db->updateToken(slotID, pLabel, labelLength))
+            goto InitToken_err;
+    }
+    ret = CKR_OK;
+InitToken_err:
+    if (pL) free(pL);
+	return ret;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_InitPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 	return CKR_FUNCTION_NOT_SUPPORTED;
@@ -299,7 +379,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_OpenSession)(CK_SLOT_ID slotID, CK_FLAGS flags, CK_V
 {
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
-	if (slotID >= nr_slots)
+	if (slotID >= max_slots)
 		return CKR_SLOT_ID_INVALID;
 
 	if (!(flags & CKF_SERIAL_SESSION))
@@ -490,17 +570,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_FindObjectsFinal)(CK_SESSION_HANDLE hSession)
     s->operation = PKCS11_CK_OPERATION_NONE;
 	return CKR_OK;
 }
-
-void printhex(const char *s, unsigned char *buf, unsigned long length){
-    int i;
-    printf("%s", s);
-    for (i=0; i< (int)length; i++) {
-        if ((i % 16) == 0) printf("\n");
-        printf("%02X ", buf[i]);
-    }
-    printf("\n");
-}
-
 
 CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
