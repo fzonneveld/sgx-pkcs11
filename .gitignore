@@ -1,3 +1,7 @@
 *.o
 *.so
 token
+core
+tst
+.pkcs11_db
+App

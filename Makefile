@@ -8,4 +8,4 @@ clean:
 	rm test || true
 
 test: test.cpp
-	gcc -g -Wall test.cpp -ldl -lstdc++ -o test
+	gcc -g -Wall test.cpp -lstdc++ -ldl -o test

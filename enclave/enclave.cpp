@@ -14,6 +14,9 @@
 #include "openssl/rsa.h"
 #include "openssl/pem.h"
 #include "openssl/rand.h"
+#include "openssl/err.h"
+
+#include "attribute.h"
 
 #define CK_PTR *
 #define CK_DEFINE_FUNCTION(returnType, name) returnType name
@@ -82,15 +85,29 @@ int SGXgenerateRSAKeyPair(
     uint8_t *pPrivateKeyDER = NULL, *pPublicKeyDER = NULL;
 
     if (rootKeySet == CK_FALSE) return ret;
+    ret -= 1;
 
     // Check attributes...
+    CK_ULONG nrAttributes;
+    CK_ATTRIBUTE_PTR pAttr = NULL;
+
+    pAttr = attributeDeserialize(pSerialAttr, serialAttrLen, &nrAttributes);
+    if (pAttr == NULL) return ret;
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pAttrMap;
+    pAttrMap = attr2map(pAttr, nrAttributes);
+    ret -= 1;
+    // Check attributes
+    CK_BBOOL tr = CK_TRUE;
+    bool decrypt = checkAttr(pAttrMap, CKA_DECRYPT, &tr, sizeof tr);
+    bool sign = checkAttr(pAttrMap, CKA_SIGN, &tr, sizeof tr);
+    if (!( sign ^ decrypt)) goto generateRSAKeyPair_err;
 
 	if ((rsa_key = generateRSA(bitLen, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err;
-	ret = -2;
+	ret -= 1;
     if ((privateKeyDERlength = getRSAder(rsa_key, &pPrivateKeyDER, i2d_PrivateKey)) <= 0) goto generateRSAKeyPair_err;
-	ret = -3;
+	ret -= 1;
     if (0 >= (publicKeyLength = getRSAder(rsa_key, &pPublicKeyDER, i2d_PublicKey))) goto generateRSAKeyPair_err;
-	ret = -4;
+	ret -= 1;
     if (publicKeyLength > RSAPublicKeyLength) goto generateRSAKeyPair_err;
 
     if ((privateKeyDERlength  + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE) > RSAPrivateKeyLength) goto generateRSAKeyPair_err;
@@ -111,6 +128,7 @@ int SGXgenerateRSAKeyPair(
     memcpy(RSAPublicKey, pPublicKeyDER, publicKeyLength);
     ret = 0;
 generateRSAKeyPair_err:
+    if (pAttr) free(pAttr);
     if (pPrivateKeyDER) free(pPrivateKeyDER);
     if (pPublicKeyDER) free(pPublicKeyDER);
     if (rsa_key) RSA_free(rsa_key);
@@ -183,12 +201,15 @@ int SGXDecryptRSA(
 		(sgx_aes_gcm_128bit_tag_t *) private_key_ciphered)) goto SGXDecryptRSA_err;
 	ret  = -3;
 	endptr = (const uint8_t *) private_key_der;
-	if ((pKey = d2i_PrivateKey(EVP_PKEY_RSA, &pKey, &endptr, (long) privateKeyDERlength)) == NULL)
+	if ((pKey = d2i_PrivateKey(EVP_PKEY_RSA, &pKey, &endptr, (long) privateKeyDERlength)) == NULL){
 		goto SGXDecryptRSA_err;
+    }
 	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto SGXDecryptRSA_err;
     if ((to = (uint8_t *)malloc(RSA_size(rsa))) == NULL) goto SGXDecryptRSA_err;
-	if (-1 == (to_len = RSA_private_decrypt(ciphertext_length, ciphertext, to, rsa, padding)))
-		goto SGXDecryptRSA_err;
+    to_len = RSA_private_decrypt(ciphertext_length, ciphertext, to, rsa, padding);
+	if (-1 == to_len) {
+        goto SGXDecryptRSA_err;
+    }
     ret = -6;
     if ((size_t) to_len > plaintext_length) goto SGXDecryptRSA_err;
     ret = -7;

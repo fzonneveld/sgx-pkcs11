@@ -953,8 +953,10 @@ CK_RV GenerateKeyPairRSA(
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
     serialized_attr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &attrLen);
+    printhex("pro->pAttributes:", (uint8_t *)pro->pAttributes, sizeof *pro->pAttributes);
 
-
+    printhex("pro", (uint8_t *)pro->pAttributes[0].pValue, pro->pAttributes[0].ulValueLen);
+    printhex("serialized:", serialized_attr, attrLen);
 
 	try {
 		crypto->RSAKeyGeneration(

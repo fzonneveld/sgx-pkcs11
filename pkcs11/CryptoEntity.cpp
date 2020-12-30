@@ -48,6 +48,19 @@ CryptoEntity::CryptoEntity() {
 
 #define MAX_KEY_BUF 8192
 
+
+static void printhex(const char *s, unsigned char *buf, unsigned long length){
+    int i;
+    printf("%s", s);
+    for (i=0; i< (int)length; i++) {
+        if ((i % 16) == 0) printf("\n");
+        printf("%02X ", buf[i]);
+    }
+    printf("\n");
+}
+
+
+
 void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *pSerialAttr, size_t serialAttrLen, size_t bitLen) {
 	sgx_status_t stat;
     int ret;
@@ -59,8 +72,10 @@ void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLeng
     *pPublicKey = (uint8_t *)calloc(*pPublicKeyLength, 1);
     *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);
 
+    printhex("attr", pSerialAttr, serialAttrLen);
 	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, pSerialAttr, serialAttrLen, NULL, 0, bitLen);
 	if (stat != SGX_SUCCESS || ret != 0) {
+        printf("Ret=%i\n", ret);
 		free(*pPublicKey);
 		free(*pPrivateKey);
 		throw new std::exception;
