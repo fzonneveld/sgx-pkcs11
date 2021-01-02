@@ -16,11 +16,16 @@
 
 #include "../../cryptoki/pkcs11.h"
 
-void test_generateRSAKeyPair(){
-}
 
-void test_SGXcryptRSA(){
-}
+extern CU_pSuite pkcs11_suite();
+extern CU_pSuite attribute_suite();
+
+typedef CU_pSuite (*t_suite_create)(void);
+
+t_suite_create funcs[] = {
+    pkcs11_suite,
+    attribute_suite,
+};
 
 int main(int argc, char *argv[]) {
 	CU_pSuite pSuite = NULL;
@@ -30,22 +35,11 @@ int main(int argc, char *argv[]) {
 		return CU_get_error();
 
 	/* add a suite to the registry */
-	pSuite = CU_add_suite("PKCS11 test Suite RSA ", NULL, NULL);
-	if (NULL == pSuite) {
-		CU_cleanup_registry();
-		return CU_get_error();
-	}
-
+    t_suite_create s;
+    for  (t_suite_create &f : funcs) {
+        CU_pSuite s = f();
+    }
 	/* add the tests to the suite */
-	if ((NULL == CU_add_test(pSuite, "generateRSAKeyPair()", test_generateRSAKeyPair))
-	   // || (NULL == CU_add_test(pSuite, "generatePassPhrase()", test_generatePassPhrase))
-	   || (NULL == CU_add_test(pSuite, "SGXEncryptRSA(), SGXDecryptRSA()", test_SGXcryptRSA))
-	 )
-	{
-		CU_cleanup_registry();
-		return CU_get_error();
-	  /* Run all tests using the CUnit Basic interface */
-	}
 	CU_basic_set_mode(CU_BRM_VERBOSE);
 	CU_basic_run_tests();
 	CU_cleanup_registry();

@@ -1,4 +1,5 @@
-TEST_DIRS = enclave/tests pkcs11/test
+# TEST_DIRS = enclave/tests pkcs11/test
+TEST_DIRS = enclave/tests 
 
 all: test
 	for t in ${TEST_DIRS}; do make -C $$t; $$t/tst ; done
