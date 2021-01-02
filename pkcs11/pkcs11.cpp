@@ -138,8 +138,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 	if (crypto != NULL)
         return CKR_CRYPTOKI_ALREADY_INITIALIZED;
 
-    std::cout << "Inializing...." << std::endl;
-
 	try {
 		crypto = new CryptoEntity();
 	}
@@ -149,7 +147,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
     // Set the slots, slots are simulated
     // Should be environment variable configurable
     max_slots =  GetEnv<int>((const char *)"PKCS_SGX_MAX_SLOTS", DEFAULT_NR_SLOTS);
-    printf("Opening DB\n");
     const char *dbFileName = GetEnv<std::string>((const char *)"PKCS_DB_NAME", DEFAULT_DB_NAME).c_str();
 	try {
 		db = new Database(dbFileName);
@@ -158,7 +155,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 		return CKR_DEVICE_ERROR;
 	}
     if (db->IsNewDatabase()) {
-        printf("Using new database %s\n", defaultDBfileName);
         size_t rootKeyLength = crypto->GetSealedRootKeySize();
         uint8_t *rootKey = alloca(rootKeyLength);
         try {
@@ -173,7 +169,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 		size_t rootKeyLength;
         uint8_t *rootKey;
 
-        printf("Using old database %s\n", defaultDBfileName);
 		if (NULL == (rootKey = db->GetRootKey(rootKeyLength)))
             return CKR_DEVICE_ERROR;
         try {
@@ -953,10 +948,6 @@ CK_RV GenerateKeyPairRSA(
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
     serialized_attr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &attrLen);
-    printhex("pro->pAttributes:", (uint8_t *)pro->pAttributes, sizeof *pro->pAttributes);
-
-    printhex("pro", (uint8_t *)pro->pAttributes[0].pValue, pro->pAttributes[0].ulValueLen);
-    printhex("serialized:", serialized_attr, attrLen);
 
 	try {
 		crypto->RSAKeyGeneration(

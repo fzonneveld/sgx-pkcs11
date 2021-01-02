@@ -160,7 +160,6 @@ int CryptoEntity::RestoreRootKey(uint8_t *rootKeySealed, size_t rootKeySealedLen
     int retval;
 	stat = SGXSetRootKeySealed(this->enclave_id_, &retval, rootKeySealed, rootKeySealedLength);
 	if (stat != SGX_SUCCESS || retval !=0) {
-		printf("%s:%ii stat=%i\n", __FILE__, __LINE__, retval);
 		return 1;
 	}
     return 0;

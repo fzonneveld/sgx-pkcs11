@@ -65,12 +65,10 @@ std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, C
 }
 
 
-//   New
 CK_ATTRIBUTE_PTR getAttr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type) {
     std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR>::iterator it;
     it = attrMap.find(type);
-    if (it == attrMap.end()) return NULL;
-    return it->second;
+	return it == attrMap.end() ? NULL : it->second;
 }
 
 CK_RV matchUlAttr(CK_ATTRIBUTE *p, CK_ULONG ul) {
@@ -124,6 +122,12 @@ CK_ATTRIBUTE_PTR attrMerge(
 	a.clear();
 	b.clear();
 	return ret;
+}
+
+bool attrcmp(CK_ATTRIBUTE_PTR a, CK_ATTRIBUTE_PTR b){
+	if (a->type != b->type) return false;
+	if (a->ulValueLen != b->ulValueLen) return false;
+	return memcmp(a->pValue, b->pValue, a->ulValueLen) == 0 ? true : false;
 }
 
 
