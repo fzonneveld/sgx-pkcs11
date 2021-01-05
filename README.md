@@ -3,9 +3,10 @@
 ## Extended original sgx-pkcs11 with following features:
   * Root key can be set per enclave. Root keys are sealed and enclave specific
   * Bit size for RSA keys can be specified
-  * RSA keys are stored in SQLite3 DB as PKCS11 objects
-  * Objects can be listed, and retrieved as handles
-  * Objects are stored in DB GCM ecnrypted and authenticated using rootKey
+  * PKCS11 Objects are stored sealed in SQLite3 DB as PKCS11 objects
+  * PKCS11 Objects can be listed, and retrieved as handles
+  * PKCS11 Objects are stored in DB GCM ecnrypted and authenticated using rootKey
+  * Attributes of PKCS11 Objects are authenticated as metadata
   * Attributes are serialized and added as authentication for PKCS#11 objects
 
 ## Wishlist:
