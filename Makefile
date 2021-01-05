@@ -1,10 +1,10 @@
 # TEST_DIRS = enclave/tests pkcs11/test
-TEST_DIRS = enclave/tests 
+TEST_DIRS = enclave/tests # pkcs11/test
 
 all: test
-	for t in ${TEST_DIRS}; do make -C $$t; $$t/tst ; done
 	$(MAKE) -f enclave.mk all
 	$(MAKE) -f app.mk all
+	for t in ${TEST_DIRS}; do make -C $$t; $$t/tst ; done
 
 clean:
 	for t in ${TEST_DIRS}; do make -C $$t clean; done
@@ -12,6 +12,9 @@ clean:
 	$(MAKE) -f enclave.mk clean
 	rm test || true
 
+
+PKCS11_crypto_engine.signed.so:
+	$(MAKE) -f enclave.mk all
 
 test: test.cpp
 	gcc -g -Wall test.cpp -lstdc++ -ldl -o $@

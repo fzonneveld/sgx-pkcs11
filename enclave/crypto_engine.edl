@@ -48,7 +48,9 @@ from "sgx_tsgxssl.edl" import *;
             [user_check]size_t* rootKeyLength
         );
 
-        public size_t SGXGetSealedRootKeySize();
+        public int SGXGetSealedRootKeySize(
+			[user_check]size_t *rootKeyLength
+		);
 
         public int SGXSetRootKeySealed(
             [in, readonly, count=root_key_len_sealed]const uint8_t *root_key_sealed,

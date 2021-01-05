@@ -93,7 +93,6 @@ unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, co
 		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
 
 	if (ret != SGX_SUCCESS || retval != 0) {
-        printf("ret=%i\n", retval);
 		throw std::runtime_error("Encryption failed\n");
     }
 	return cipherData;
@@ -135,20 +134,25 @@ int CryptoEntity::GenerateRandom(uint8_t *random, size_t random_length) {
 
 size_t CryptoEntity::GetSealedRootKeySize() {
 	sgx_status_t stat;
-    size_t retval;
-	stat = SGXGetSealedRootKeySize(this->enclave_id_, &retval);
-	if (stat != SGX_SUCCESS) {
+    int retval = -2;
+    size_t rootKeySealedLength;
+
+	stat = SGXGetSealedRootKeySize(this->enclave_id_, &retval, &rootKeySealedLength);
+	if (stat != SGX_SUCCESS || retval) {
+        printf("Stat=%i\n", stat);
+        printf("Retval=%i\n", retval);
+        printf("rootKeySealedLength=%lu\n", rootKeySealedLength);
 		throw std::runtime_error("Getting root key size failed failed\n");
     }
-    return retval;
+    return rootKeySealedLength;
 }
 
 int CryptoEntity::GenerateRootKey(uint8_t *rootKeySealed, size_t *rootKeySealedLength){
 	sgx_status_t stat;
     int retval;
     size_t sealedRootKeySize;
-	stat = SGXGetSealedRootKeySize(this->enclave_id_, &sealedRootKeySize);
-	if (stat != SGX_SUCCESS) return 1;
+	stat = SGXGetSealedRootKeySize(this->enclave_id_, &retval, &sealedRootKeySize);
+	if (stat != SGX_SUCCESS || retval) return 1;
     if (sealedRootKeySize > *rootKeySealedLength) return 2;
 	stat = SGXGenerateRootKey(this->enclave_id_, &retval, rootKeySealed, sealedRootKeySize, rootKeySealedLength);
 	if (stat != SGX_SUCCESS || retval != 0) return 3;

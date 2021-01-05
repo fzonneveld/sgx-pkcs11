@@ -163,8 +163,9 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
         catch (std::runtime_error) {
             return CKR_DEVICE_ERROR;
         }
-        if (db->SetRootKey(rootKey, rootKeyLength))
+        if (db->SetRootKey(rootKey, rootKeyLength)) {
             return CKR_DEVICE_ERROR;
+        }
     } else {
 		size_t rootKeyLength;
         uint8_t *rootKey;
@@ -172,8 +173,9 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 		if (NULL == (rootKey = db->GetRootKey(rootKeyLength)))
             return CKR_DEVICE_ERROR;
         try {
-            if (crypto->RestoreRootKey(rootKey, rootKeyLength))
+            if (crypto->RestoreRootKey(rootKey, rootKeyLength)) {
                 return CKR_DEVICE_ERROR;
+            }
 		}
         catch (std::runtime_error) {
             return CKR_DEVICE_ERROR;
@@ -261,6 +263,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetTokenInfo)(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR p
     pInfo->ulMaxRwSessionCount = MAX_RW_SESSION_COUNT;
 	return CKR_OK;;
 }
+
 
 CK_MECHANISM_TYPE mechanismList[] = {
     CKM_RSA_PKCS_KEY_PAIR_GEN,

@@ -232,8 +232,9 @@ generateRandom_err:
     return ret;
 }
 
-size_t SGXGetSealedRootKeySize(){
-    return sizeof(sgx_sealed_data_t) + ROOTKEY_LENGTH;
+int SGXGetSealedRootKeySize(size_t *rootKeyLength){
+    *rootKeyLength = sizeof(sgx_sealed_data_t) + ROOTKEY_LENGTH;
+    return 0;
 }
 
 int SGXGenerateRootKey(uint8_t *rootKeySealed, size_t root_key_length, size_t *rootKeyLength){
@@ -258,7 +259,7 @@ int SGXGetRootKeySealed(uint8_t *root_key_sealed, size_t root_key_len_sealed, si
 	sgx_status_t stat;
     static uint8_t rootKey[ROOTKEY_LENGTH];
 
-    *rootKeyLenSealed = SGXGetSealedRootKeySize();
+    if (SGXGetSealedRootKeySize(rootKeyLenSealed)) return -1;
     if (*rootKeyLenSealed > root_key_len_sealed) {
         return -1;
     }

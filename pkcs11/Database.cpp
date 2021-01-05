@@ -42,6 +42,7 @@ int Database::SetRootKey(uint8_t *rootKey, size_t rootKeyLength){
 	sqlite3_stmt *pStmt;
     char sql[] = "INSERT INTO RootKey(value) VALUES(?);";
     int rc;
+	printf("rootKeyLength=%lu\n", rootKeyLength);
     if (SQLITE_OK != sqlite3_prepare_v2(this->db, sql, -1, &pStmt, NULL))
         return -1;
     if (SQLITE_OK != sqlite3_bind_blob(pStmt, 1, rootKey, rootKeyLength, SQLITE_STATIC))
@@ -50,6 +51,7 @@ int Database::SetRootKey(uint8_t *rootKey, size_t rootKeyLength){
         return -1;
     }
     sqlite3_finalize(pStmt);
+    sqlite3_exec(db, "COMMIT;", 0, 0, 0);
     return 0;
 }
 
