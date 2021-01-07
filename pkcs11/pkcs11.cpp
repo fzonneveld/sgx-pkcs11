@@ -81,25 +81,6 @@ T GetEnv(const char *env_name, T default_value){
 }
 
 
-// static int get_env_int(const char *env_name, int default_value) {
-//     const char *env = std::getenv(env_name);
-//     return env == NULL ? default_value : atoi(env);
-// }
-
-
-// std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attr2map(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount) {
-//     std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap;
-//     do {
-//         attrMap[pAttr->type] = pAttr;
-//         pAttr++;
-//     } while (--ulAttrCount != 0);
-//     return attrMap;
-// }
-
-
-const char *defaultRootkeyFile = DEFAULT_ROOT_KEY_FILE;
-const char defaultDBfileName[] = DEFAULT_DB_NAME;
-
 int sha256(const uint8_t *message, size_t message_len, uint8_t **digest, size_t& digest_len)
 {
     EVP_MD_CTX *mdctx = NULL;

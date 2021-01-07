@@ -52,7 +52,7 @@ else
 	Service_Library_Name := sgx_tservice
 endif
 
-Enclave_Cpp_Files := enclave/enclave.cpp enclave/attribute.cpp
+Enclave_Cpp_Files := enclave/enclave.cpp enclave/attribute.cpp enclave/ssss.cpp
 Enclave_Include_Paths := -Ipkcs11 -Icryptoki -I$(SGX_SDK)/include -I$(SGX_SDK)/include/libcxx -I$(SGX_SDK)/include/tlibc -I$(SGX_SSL)/include
 
 Enclave_C_Flags := $(SGX_COMMON_CFLAGS) -nostdinc -fvisibility=hidden -fpie -ffunction-sections -fdata-sections -fstack-protector-strong $(Enclave_Include_Paths) -include "tsgxsslio.h"

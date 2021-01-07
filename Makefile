@@ -1,5 +1,4 @@
-# TEST_DIRS = enclave/tests pkcs11/test
-TEST_DIRS = enclave/tests # pkcs11/test
+TEST_DIRS = enclave/tests pkcs11/test
 
 all: test
 	$(MAKE) -f enclave.mk all
