@@ -61,11 +61,17 @@ from "sgx_tsgxssl.edl" import *;
             size_t root_key_len_sealed,
             [user_check]size_t* rootKeyLenSealed
         );
+		public int SGXSetRootKeyShare(
+			int x,
+            [in, readonly, count=y_length]const uint8_t *y,
+			size_t  y_length,
+			int threshold
+		);
     };
 
     untrusted {
         [cdecl] int pthread_wait_timeout_ocall (unsigned long long waiter, unsigned long long timeout);
         [cdecl] int pthread_create_ocall(unsigned long long self);
         [cdecl] int pthread_wakeup_ocall(unsigned long long waiter);
-    }; 
+    };
 };

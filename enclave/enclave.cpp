@@ -17,6 +17,7 @@
 #include "openssl/err.h"
 
 #include "attribute.h"
+#include "ssss.h"
 
 #define CK_PTR *
 #define CK_DEFINE_FUNCTION(returnType, name) returnType name
@@ -30,8 +31,8 @@
 
 #include "../cryptoki/pkcs11.h"
 
-#define ROOTKEY_LENGTH 16
-static uint8_t rootKey[ROOTKEY_LENGTH];
+#define ROOTKEY_LENGTH 32
+uint8_t rootKey[ROOTKEY_LENGTH];
 CK_BBOOL rootKeySet = CK_FALSE;
 
 RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength) {
@@ -283,3 +284,45 @@ int SGXSetRootKeySealed(const uint8_t *root_key_sealed, size_t root_key_len_seal
     rootKeySet = CK_TRUE;
     return 0;
 }
+
+#define PRIME "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF43"
+
+int SGXSetRootKeyShare(int x, const uint8_t *y, size_t y_length, int threshold)
+{
+	static int local_threshold = 0;
+	static int *x_s = NULL;
+	static BIGNUM **y_s = NULL;
+	static int nr_shares = 0;
+
+	if (SGX_SUCCESS != sgx_read_rand(rootKey, ROOTKEY_LENGTH)) goto setRootKeyShare_err;
+	if (x_s == NULL) {
+		local_threshold = threshold;
+	}
+	if (threshold != local_threshold) return -3;
+	rootKeySet = CK_FALSE;
+	if (threshold < 2) return -1;
+	for (int i=0; i<nr_shares; i++) if (x_s[i] == x) return -2;
+	x_s = (int *) realloc(x_s, sizeof *x_s * (nr_shares + 1));
+	x_s[nr_shares] = x;
+	y_s = (BIGNUM **) realloc(y_s, sizeof *y_s * (nr_shares + 1));
+	y_s[nr_shares] = BN_new();
+	BN_bin2bn(y, y_length, y_s[nr_shares]);
+	x_s[nr_shares] = x;
+	nr_shares += 1;
+	if (nr_shares == threshold) {
+		BIGNUM *res = BN_new();
+		BIGNUM *prime = NULL;
+		BN_hex2bn(&prime, PRIME);
+		lagrange_interpolate(res, 0, x_s, y_s, nr_shares, prime);
+		BN_bn2bin(res, rootKey);
+		printf("%s:%i\n", __FILE__, __LINE__);
+		rootKeySet = CK_TRUE;
+		local_threshold = 0;
+		free(x_s); x_s = NULL;
+		free(y_s); y_s = NULL;
+		return 1;
+	}
+setRootKeyShare_err:
+	return 0;
+}
+

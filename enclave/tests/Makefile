@@ -9,7 +9,7 @@ SGX_SSL ?= /opt/intel/sgxssl
 # CFLAGS := -Wall -g -I../../pkcs11 -I../../cryptoki -Iinclude/sgxsdk -Iinclude/sgxssl
 # CFLAGS := -Wall -g -I../../pkcs11 -I../../cryptoki -Iinclude/sgxsdk
 # CFLAGS := -Wall -g -I../../pkcs11 -I../../cryptoki -I${SGX_SDK}/include -Iinclude/sgxssl
-CFLAGS := -Wall -g -I../../pkcs11 -I../../cryptoki -I${SGX_SDK}/include # -Iinclude/sgxssl
+CFLAGS := -Wall -g -I../../pkcs11 -I../../cryptoki -I${SGX_SDK}/include -Iinclude/sgxssl
 # CFLAGS := -Wall -g $(Enclave_Include_Paths)
 # CFLAGS := -Wall -g
 
