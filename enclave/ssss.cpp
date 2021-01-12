@@ -62,6 +62,7 @@ int lagrange_interpolate(BIGNUM *res, int x, int *x_s, BIGNUM **y_s, size_t s_le
 		BN_free(n);
     }
 	BN_mod_mul_reciprocal(res, num, den, rctx, ctx);
+	free(den);
     BN_mod(res, res, p, ctx);
     return 0;
 }

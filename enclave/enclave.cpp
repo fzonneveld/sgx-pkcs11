@@ -315,7 +315,6 @@ int SGXSetRootKeyShare(int x, const uint8_t *y, size_t y_length, int threshold)
 		BN_hex2bn(&prime, PRIME);
 		lagrange_interpolate(res, 0, x_s, y_s, nr_shares, prime);
 		BN_bn2bin(res, rootKey);
-		printf("%s:%i\n", __FILE__, __LINE__);
 		rootKeySet = CK_TRUE;
 		local_threshold = 0;
 		free(x_s); x_s = NULL;
