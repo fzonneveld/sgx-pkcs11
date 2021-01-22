@@ -3,7 +3,7 @@ enclave {
 from "sgx_tsgxssl.edl" import *;
 
 	trusted {
-		public int SGXgenerateRSAKeyPair(
+		public int SGXgenerateKeyPair(
 			[out, count=publicKeyLength]uint8_t* RSAPublicKey,
             size_t publicKeyLength,
             [user_check]size_t *publicKeyLengthOut,
@@ -11,10 +11,7 @@ from "sgx_tsgxssl.edl" import *;
             size_t privateKeyLength,
 			[user_check]size_t *privateKeyLengthOut,
             [in, readonly, count=serialAttrLen]const uint8_t *pSerialAttr,
-			size_t serialAttrLen,
-            [in, readonly, count=exponentLength]const unsigned char *exponent,
-            size_t exponentLength,
-            size_t bitLen
+			size_t serialAttrLen
 		);
 
 		public int SGXEncryptRSA(

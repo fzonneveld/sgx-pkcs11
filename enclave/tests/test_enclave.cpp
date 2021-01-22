@@ -26,6 +26,7 @@ CK_KEY_TYPE keyType = CKK_RSA;
 CK_BYTE subject[] = { "Ciphered private RSA key" };
 CK_BYTE id[] = { 123 };
 CK_BYTE dat[] = "";
+CK_ULONG modulus_bits = 2048;
 
 CK_ATTRIBUTE privateRSAKeyTemplate[] = {
     {CKA_KEY_TYPE, &keyType, sizeof keyType},
@@ -34,6 +35,7 @@ CK_ATTRIBUTE privateRSAKeyTemplate[] = {
 	{CKA_SUBJECT, subject, sizeof(subject)},
 	{CKA_ID, id, sizeof(id)},
 	{CKA_SENSITIVE, &tr, sizeof(tr)},
+    {CKA_MODULUS_BITS, &modulus_bits, sizeof(modulus_bits)},
 	{CKA_DECRYPT, &tr, sizeof(tr)},
 };
 
@@ -41,12 +43,10 @@ CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplate / sizeof *pr
 
 
 
-int SGXgenerateRSAKeyPair(
+int SGXgenerateKeyPair(
         uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
         uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
-		const uint8_t *pSerialAttr, size_t serialAttrLen,
-        const unsigned char *exponent, size_t exponentLength,
-        size_t bitLen);
+		const uint8_t *pSerialAttr, size_t serialAttrLen);
 
 void test_generateRSAKeyPair(){
 	uint8_t pubkey[2048], privkey[2048];
@@ -58,10 +58,10 @@ void test_generateRSAKeyPair(){
     rootKeySet = CK_TRUE;
     pSerializedAttr = attributeSerialize(
         privateRSAKeyTemplate, privateRSAKeyTemplateLength, &serializedAttrLen);
-	ret = SGXgenerateRSAKeyPair(pubkey, sizeof pubkey, &pubkeyLength, privkey, sizeof privkey, &privkeyLength, pSerializedAttr, serializedAttrLen, NULL, 0, 2048);
+	ret = SGXgenerateKeyPair(pubkey, sizeof pubkey, &pubkeyLength, privkey, sizeof privkey, &privkeyLength, pSerializedAttr, serializedAttrLen);
 	CU_ASSERT_FATAL(0 == ret);
-	ret = SGXgenerateRSAKeyPair(pubkey, 10, &pubkeyLength, privkey, 10, &privkeyLength, pSerializedAttr, serializedAttrLen, NULL, 0, 2048);
-	CU_ASSERT(-6 == ret);
+	ret = SGXgenerateKeyPair(pubkey, 10, &pubkeyLength, privkey, 10, &privkeyLength, pSerializedAttr, serializedAttrLen);
+	CU_ASSERT(ret < 0)
 }
 
 
@@ -98,7 +98,7 @@ void test_SGXcryptRSA(){
         privateRSAKeyTemplate, privateRSAKeyTemplateLength, &serializedAttrLen);
 
 	CU_ASSERT_FATAL(pSerializedAttr != NULL);
-	CU_ASSERT_FATAL(0 == SGXgenerateRSAKeyPair(pubkey, sizeof pubkey, &pubkeyLength, privkey, sizeof privkey, &privkeyLength, pSerializedAttr, serializedAttrLen, NULL, 0, 2048));
+	CU_ASSERT_FATAL(0 == SGXgenerateKeyPair(pubkey, sizeof pubkey, &pubkeyLength, privkey, sizeof privkey, &privkeyLength, pSerializedAttr, serializedAttrLen));
 	CU_ASSERT_FATAL(0 == SGXEncryptRSA(
 		pubkey, pubkeyLength,
 		plaintext, sizeof plaintext,
@@ -148,9 +148,7 @@ void test_SGXSetRootKeyShare(void)
 
 	int threshold = 2;
 
-	printf("rootkey=%i\n", rootKeySet);
 	CU_ASSERT_FATAL(0 == SGXSetRootKeyShare(sset[0].x, sset[0].y, 32, threshold));
-	printf("rootkey=%i\n", rootKeySet);
 	CU_ASSERT_FATAL(rootKeySet == CK_FALSE);
 	CU_ASSERT_FATAL(1 == SGXSetRootKeyShare(sset[1].x, sset[1].y, 32, threshold));
 	CU_ASSERT_FATAL(rootKeySet == CK_TRUE);

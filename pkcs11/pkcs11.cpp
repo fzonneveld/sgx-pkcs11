@@ -886,7 +886,6 @@ CK_RV GenerateKeyPairRSA(
     if (publicKeyAttrMap.count(CKA_MODULUS_BITS) == 0) return CKR_TEMPLATE_INCONSISTENT;
     CK_ATTRIBUTE_PTR bitLenAttrPtr = publicKeyAttrMap[CKA_MODULUS_BITS];
     if (sizeof(CK_ULONG) != bitLenAttrPtr->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
-    CK_ULONG bitLen = *((CK_ULONG *)bitLenAttrPtr->pValue);
 
 	uint8_t* publicKey = NULL;
 	size_t publicKeyLength;
@@ -919,10 +918,12 @@ CK_RV GenerateKeyPairRSA(
 ;
 		// Private key
 		keyClass = CKO_PRIVATE_KEY;
+        CK_ULONG modulusBits = 2048;
 		CK_ATTRIBUTE privateKeyAttr[] = {
 			{ CKA_CLASS, &keyClass, sizeof(keyClass)},
 			{ CKA_TOKEN, &token, sizeof(token)},
 			{ CKA_PRIVATE, &tr, sizeof tr },
+            { CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)},
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
 		pro = (pkcs11_object_t *)malloc(sizeof *pro);
@@ -934,8 +935,8 @@ CK_RV GenerateKeyPairRSA(
     serialized_attr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &attrLen);
 
 	try {
-		crypto->RSAKeyGeneration(
-			&publicKey, &publicKeyLength, &privateKey, &privateKeyLength, serialized_attr, attrLen, bitLen);
+		crypto->KeyGeneration(
+			&publicKey, &publicKeyLength, &privateKey, &privateKeyLength, serialized_attr, attrLen);
 	}
 	catch (std::exception e) {
 		return CKR_DEVICE_ERROR;

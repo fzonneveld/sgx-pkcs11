@@ -18,7 +18,7 @@ private:
 	sgx_enclave_id_t enclave_id_;
 public:
 	CryptoEntity();
-    void RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *serialAttr, size_t serialAttrLen, size_t bitLen);
+    void KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *serialAttr, size_t serialAttrLen);
 	// void RSAInitEncrypt(uint8_t* key, size_t length);
     uint8_t* RSAEncrypt(const uint8_t *key, size_t keyLength, const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength);
 	uint8_t* RSADecrypt(const uint8_t *key, size_t keyLength, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength);

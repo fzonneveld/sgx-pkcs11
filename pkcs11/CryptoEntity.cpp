@@ -61,7 +61,7 @@ static void printhex(const char *s, unsigned char *buf, unsigned long length){
 
 
 
-void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *pSerialAttr, size_t serialAttrLen, size_t bitLen) {
+void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *pSerialAttr, size_t serialAttrLen) {
 	sgx_status_t stat;
     int ret;
 
@@ -73,9 +73,9 @@ void CryptoEntity::RSAKeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLeng
     *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);
 
     printhex("attr", pSerialAttr, serialAttrLen);
-	stat = SGXgenerateRSAKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, pSerialAttr, serialAttrLen, NULL, 0, bitLen);
+	stat = SGXgenerateKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, pSerialAttr, serialAttrLen);
+    printhex("attr", pSerialAttr, serialAttrLen);
 	if (stat != SGX_SUCCESS || ret != 0) {
-        printf("Ret=%i\n", ret);
 		free(*pPublicKey);
 		free(*pPrivateKey);
 		throw new std::exception;

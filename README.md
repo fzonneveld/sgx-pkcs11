@@ -8,11 +8,14 @@
   * PKCS11 Objects are stored in DB GCM ecnrypted and authenticated using rootKey
   * Attributes of PKCS11 Objects are authenticated as metadata
   * Attributes are serialized and added as authentication for PKCS#11 objects
+  * root key can be randomly generated
+  * root key can be loaded using Shamir secre Sharing Scheme with a prime
+    set to first prime number from 2<<256 downwards, which is 0xFF{31},0X43.
+  * This makes it possible to dowload 32 bytes root keys in shares.
 
 ## Wishlist:
   * Add support for EC
   * Add support for symmetric key generation
-  * Enable loading of rootkey (outside of PKCS11 interface) using Shamir Secret Sharing Scheme (SSSS)
 
 ## Build
 1. Install the [SGX driver](https://github.com/intel/linux-sgx-driver);
