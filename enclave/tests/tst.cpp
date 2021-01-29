@@ -2,13 +2,13 @@
 
 #include <CUnit/Basic.h>
 
-extern CU_pSuite enclave_suite();
+extern CU_pSuite rsa_suite();
 extern CU_pSuite ssss_suite();
 
 typedef CU_pSuite (*t_suite_create)(void);
 
 t_suite_create funcs[] = {
-    enclave_suite,
+    rsa_suite,
     ssss_suite,
 };
 

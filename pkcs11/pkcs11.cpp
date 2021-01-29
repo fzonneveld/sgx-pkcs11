@@ -29,6 +29,37 @@ CK_FUNCTION_LIST functionList = {
 #undef CK_PKCS11_FUNCTION_INFO
 };
 
+#define RSA_MIN_KEY_SIZE 1024
+#define RSA_MAX_KEY_SIZE 8192
+
+#define EC_MIN_KEY_SIZE 112
+#define EC_MAX_KEY_SIZE 512
+
+
+void printAttr(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes) {
+    for (size_t i=0; i<nrAttributes; i++) {
+        CK_ATTRIBUTE_PTR a = pAttr + i;
+        printf("Attribute[%04lu] type 0x%08lx, value[%lu] ", i, a->type, a->ulValueLen);
+        for (size_t j=0; j<a->ulValueLen; j++) {
+            printf("%02X ", ((uint8_t *)a->pValue)[j]);
+        }
+        printf("\n");
+    }
+}
+
+
+void printAttrSerialized(uint8_t *pAttrserialized, size_t attrSerializedLen){
+    size_t nrAttributes;
+
+    CK_ATTRIBUTE_PTR pAttr = attributeDeserialize(pAttrserialized, attrSerializedLen, &nrAttributes);
+    if (pAttr == NULL) return;
+    printAttr(pAttr, nrAttributes);
+    free(pAttr);
+}
+
+
+
+
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
     *ppFunctionList = &functionList;
@@ -55,6 +86,7 @@ typedef struct pkcs11_session {
     pkcs11_object_t Decrypt;
     CK_OBJECT_HANDLE handle;
     PKCS_OPERATION operation;
+    CK_MECHANISM_TYPE operationMechanism;
 } pkcs11_session_t;
 
 std::map<CK_SESSION_HANDLE, pkcs11_session_t> sessions;
@@ -247,8 +279,15 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetTokenInfo)(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR p
 
 
 CK_MECHANISM_TYPE mechanismList[] = {
+    // RSA
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS,
+    CKM_SHA384_RSA_PKCS,
+    CKM_SHA512_RSA_PKCS,
+    // EC
+    CKM_EC_KEY_PAIR_GEN,
+    CKM_ECDSA,
 };
 
 
@@ -276,24 +315,36 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismList)(CK_SLOT_ID slotID, CK_MECHANISM_TY
 CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismInfo)(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR pInfo)
 {
     switch (type) {
+        case CKM_RSA_PKCS:
         case CKM_RSA_PKCS_KEY_PAIR_GEN:
-            pInfo->ulMinKeySize = 1024;
-            pInfo->ulMaxKeySize = 8192;
-            return CKR_OK;
+        case CKM_SHA256_RSA_PKCS:
+        case CKM_SHA384_RSA_PKCS:
+        case CKM_SHA512_RSA_PKCS:
+        case CKM_SHA256_RSA_PKCS_PSS:
+        case CKM_SHA384_RSA_PKCS_PSS:
+        case CKM_SHA512_RSA_PKCS_PSS:
+            pInfo->ulMinKeySize = RSA_MIN_KEY_SIZE;
+            pInfo->ulMaxKeySize = RSA_MAX_KEY_SIZE;
+            break;
+        case CKM_EC_KEY_PAIR_GEN:
+            pInfo->ulMinKeySize = EC_MIN_KEY_SIZE;
+            pInfo->ulMaxKeySize = EC_MAX_KEY_SIZE;
+            break;
         default:
             return CKR_MECHANISM_INVALID;
     }
+    return CKR_OK;
 }
 
-void printhex(const char *s, unsigned char *buf, unsigned long length){
-    int i;
-    printf("%s", s);
-    for (i=0; i< (int)length; i++) {
-        if ((i % 16) == 0) printf("\n");
-        printf("%02X ", buf[i]);
-    }
-    printf("\n");
-}
+// void printhex(const char *s, unsigned char *buf, unsigned long length){
+//     int i;
+//     printf("%s[%lu]", s, length);
+//     for (i=0; i< (int)length; i++) {
+//         if ((i % 16) == 0) printf("\n");
+//         printf("%02X ", buf[i]);
+//     }
+//     printf("\n");
+// }
 
 
 
@@ -459,7 +510,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_DestroyObject)(CK_SESSION_HANDLE hSession, CK_OBJECT
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
     if (0 > (err = db->deleteObject(hObject))) {
-        printf("%s:%i %i\n", __FILE__, __LINE__, err);
         return CKR_OBJECT_HANDLE_INVALID;
     }
 	return CKR_OK;
@@ -584,6 +634,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
         return CKR_DEVICE_ERROR;
     }
 	s->operation = PKCS11_CK_OPERATION_ENCRYPT;
+    s->operationMechanism = CKM_RSA_PKCS;
 	return CKR_OK;
 }
 
@@ -655,14 +706,13 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 
 	switch (pMechanism->mechanism)
 	{
-	case CKM_RSA_PKCS:
+        case CKM_RSA_PKCS:
+            if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
+                return CKR_MECHANISM_PARAM_INVALID;
 
-		if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
-			return CKR_MECHANISM_PARAM_INVALID;
-
-		break;
-
-		return CKR_MECHANISM_INVALID;
+            break;
+        default:
+            return CKR_MECHANISM_INVALID;
 	}
 
 
@@ -700,7 +750,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
         uint8_t *serialized_attr;
         size_t attrLen;
         serialized_attr = attributeSerialize(s->Decrypt.pAttributes, s->Decrypt.ulAttributeCount, &attrLen);
-
 		CK_BYTE_PTR res = crypto->RSADecrypt(s->Decrypt.pValue, s->Decrypt.valueLength, serialized_attr, attrLen, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
         if (res == NULL) {
             return CKR_DEVICE_ERROR;
@@ -891,8 +940,8 @@ CK_RV GenerateKeyPairRSA(
 	size_t publicKeyLength;
 	uint8_t* privateKey = NULL;
 	size_t privateKeyLength;
-    size_t attrLen;
-    uint8_t *serialized_attr;
+    size_t privAttrLen, pubAttrLen;
+    uint8_t *privSerializedAttr, *publicSerializedAttr;
 	pkcs11_object_t *pub, *pro;
 
     CK_RV ret = CKR_OK;
@@ -901,29 +950,24 @@ CK_RV GenerateKeyPairRSA(
         return ret;
     }
     if (token) {
-		CK_BBOOL fa = CK_FALSE;
-		CK_BBOOL tr = CK_TRUE;
 		CK_KEY_TYPE keyType = CKK_RSA;
         // Store in memory, return a pointer to allocated attributes...
 		// Public key
-		CK_OBJECT_CLASS keyClass = CKO_PUBLIC_KEY;
+        CK_ULONG modulusBits = 2048;
+        CK_BBOOL isPrivate = CK_TRUE;
 		CK_ATTRIBUTE publicKeyAttribs[] = {
-			{ CKA_CLASS, &keyClass, sizeof(keyClass) },
 			{ CKA_TOKEN, &token, sizeof(token) },
-			{ CKA_PRIVATE, &fa, sizeof(fa) },
+            { CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)},
+            { CKA_PRIVATE, &isPrivate, sizeof(isPrivate)},
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
 		pub = (pkcs11_object_t *)malloc(sizeof *pub);
 		pub->pAttributes = attrMerge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs, pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub->ulAttributeCount);
 ;
 		// Private key
-		keyClass = CKO_PRIVATE_KEY;
-        CK_ULONG modulusBits = 2048;
 		CK_ATTRIBUTE privateKeyAttr[] = {
-			{ CKA_CLASS, &keyClass, sizeof(keyClass)},
 			{ CKA_TOKEN, &token, sizeof(token)},
-			{ CKA_PRIVATE, &tr, sizeof tr },
-            { CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)},
+            { CKA_PRIVATE, &isPrivate, sizeof(isPrivate)},
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
 		pro = (pkcs11_object_t *)malloc(sizeof *pro);
@@ -932,11 +976,12 @@ CK_RV GenerateKeyPairRSA(
 		// For now session objects not supported
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
-    serialized_attr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &attrLen);
+    privSerializedAttr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &privAttrLen);
+    publicSerializedAttr = attributeSerialize(pub->pAttributes, pub->ulAttributeCount, &pubAttrLen);
 
 	try {
 		crypto->KeyGeneration(
-			&publicKey, &publicKeyLength, &privateKey, &privateKeyLength, serialized_attr, attrLen);
+			&publicKey, &publicKeyLength, &publicSerializedAttr, &pubAttrLen, &privateKey, &privateKeyLength, &privSerializedAttr, &privAttrLen);
 	}
 	catch (std::exception e) {
 		return CKR_DEVICE_ERROR;
@@ -947,6 +992,14 @@ CK_RV GenerateKeyPairRSA(
 
     pro->pValue = privateKey;
     pro->valueLength = privateKeyLength;
+
+    if ((pub->pAttributes = attributeDeserialize(publicSerializedAttr, pubAttrLen, &pub->ulAttributeCount)) == NULL) {
+        return CKR_DEVICE_ERROR;
+    }
+    if ((pro->pAttributes = attributeDeserialize(privSerializedAttr, privAttrLen, &pro->ulAttributeCount)) == NULL) {
+        return CKR_DEVICE_ERROR;
+    }
+
 
     int privHandle;
     if (0 > (privHandle = db->setObject(CKO_PRIVATE_KEY, pro->pValue, pro->valueLength, pro->pAttributes, pro->ulAttributeCount))) {
@@ -1011,8 +1064,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
         default:
             ret = CKR_MECHANISM_INVALID;
     }
-    pubKeyAttrMap.clear();
-    privKeyAttrMap.clear();
     return ret;
 }
 

@@ -47,15 +47,35 @@ getRSAder_good:
 }
 
 
+static CK_KEY_TYPE keyType = CKK_RSA;
+static CK_BBOOL tr = CK_TRUE;
+static CK_OBJECT_CLASS privObjecClass = CKO_PRIVATE_KEY;
+
+CK_ATTRIBUTE defaultPrivateKeyAttr[] = {
+    {CKA_CLASS, &privObjecClass, sizeof privObjecClass},
+    {CKA_KEY_TYPE, &keyType, sizeof keyType},
+	{CKA_SENSITIVE, &tr, sizeof(tr)},
+	{CKA_ALWAYS_SENSITIVE, &tr, sizeof(tr)}
+};
+std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> defaultPrivateKKeyAttrMap = ATTR2MAP(defaultPrivateKeyAttr);
+
+static CK_OBJECT_CLASS pubObjectClass = CKO_PUBLIC_KEY;
+
+CK_ATTRIBUTE defaultPublicKeyAttr[] = {
+    {CKA_CLASS, &pubObjectClass, sizeof pubObjectClass},
+    {CKA_KEY_TYPE, &keyType, sizeof keyType},
+};
+std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> defaultPublicKeyAttrMap = ATTR2MAP(defaultPublicKeyAttr);
+
 
 int generateRSAKeyPair(
         uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
+        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> &pubAttrMap,
         uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
-		const uint8_t *pSerialAttr, size_t serialAttrLen,
-        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pAttrMap){
+        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> &privAttrMap){
 
-    CK_ATTRIBUTE_PTR attr_modulus_bits = getAttr(pAttrMap, CKA_MODULUS_BITS);
-    CK_ATTRIBUTE_PTR attr_public_exponent = getAttr(pAttrMap, CKA_PUBLIC_EXPONENT);
+    CK_ATTRIBUTE_PTR attr_modulus_bits = getAttr(pubAttrMap, CKA_MODULUS_BITS);
+    CK_ATTRIBUTE_PTR attr_public_exponent = getAttr(pubAttrMap, CKA_PUBLIC_EXPONENT);
     int ret = -1;
     RSA *rsa_key = NULL;
     size_t privateKeyDERlength, publicKeyLength;
@@ -65,25 +85,30 @@ int generateRSAKeyPair(
 
     const unsigned char *exponent = NULL;
     size_t exponentLength = 0;
+    uint8_t *privSerializedAttr  = NULL; size_t privSerLen = 0;
+    CK_ATTRIBUTE_PTR privAttr = NULL; size_t nrPrivAttr;
 
     CK_BBOOL tr = CK_TRUE;
-    bool decrypt = checkAttr(pAttrMap, CKA_DECRYPT, &tr, sizeof tr);
-    bool sign = checkAttr(pAttrMap, CKA_SIGN, &tr, sizeof tr);
+    bool priv_decrypt = checkAttr(privAttrMap, CKA_DECRYPT, &tr, sizeof tr);
+    bool priv_sign = checkAttr(privAttrMap, CKA_SIGN, &tr, sizeof tr);
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubMap, privMap;
 
     if ((rootKey = getRootKey(NULL)) == NULL) goto generateRSAKeyPair_err;
 
     if (attr_modulus_bits == NULL || attr_modulus_bits->ulValueLen != sizeof(CK_ULONG)) goto generateRSAKeyPair_err;
 
     modulus_bits = *(CK_ULONG *)attr_modulus_bits->pValue;
-    if (2048 < modulus_bits or 4096 < modulus_bits) goto generateRSAKeyPair_err;
+    if (modulus_bits < 2048 || modulus_bits > 4096) goto generateRSAKeyPair_err;
 
     // Check attributes
-    if (!( sign ^ decrypt)) goto generateRSAKeyPair_err;
+    if (!( priv_sign ^ priv_decrypt)) goto generateRSAKeyPair_err;
 
     if (attr_public_exponent) {
         exponent = (uint8_t *)attr_public_exponent->pValue;
         exponentLength = attr_public_exponent->ulValueLen;
     }
+
+    ret -= 1;
 	if ((rsa_key = generateRSA(modulus_bits, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err;
     if ((privateKeyDERlength = getRSAder(rsa_key, &pPrivateKeyDER, i2d_PrivateKey)) <= 0) goto generateRSAKeyPair_err;
     if (0 >= (publicKeyLength = getRSAder(rsa_key, &pPublicKeyDER, i2d_PublicKey))) goto generateRSAKeyPair_err;
@@ -93,13 +118,19 @@ int generateRSAKeyPair(
 
 	if (SGX_SUCCESS != sgx_read_rand(RSAPrivateKey + SGX_AESGCM_MAC_SIZE, SGX_AESGCM_IV_SIZE)) goto generateRSAKeyPair_err;
 
+    pubMap = attrMergeMaps(defaultPublicKeyAttrMap, pubAttrMap);
+    privMap = attrMergeMaps(defaultPrivateKKeyAttrMap, privAttrMap);
+    pubAttrMap = pubMap;
+    privAttrMap = privMap;
+    if ((privAttr = map2attr(privAttrMap, &nrPrivAttr)) == NULL) goto generateRSAKeyPair_err;
+    if ((privSerializedAttr = attributeSerialize(privAttr,  nrPrivAttr, &privSerLen)) == NULL) goto generateRSAKeyPair_err;
 	if (SGX_SUCCESS != sgx_rijndael128GCM_encrypt(
 		(sgx_aes_gcm_128bit_key_t *) rootKey,
 		pPrivateKeyDER, privateKeyDERlength,
 		RSAPrivateKey + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
 		RSAPrivateKey + SGX_AESGCM_MAC_SIZE,
 		SGX_AESGCM_IV_SIZE,
-		pSerialAttr, serialAttrLen,
+		privSerializedAttr, privSerLen,
 		(sgx_aes_gcm_128bit_tag_t *) (RSAPrivateKey))) goto generateRSAKeyPair_err;
 
     *RSAPublicKeyLengthOut = publicKeyLength;
@@ -110,6 +141,8 @@ generateRSAKeyPair_err:
     if (pPrivateKeyDER) free(pPrivateKeyDER);
     if (pPublicKeyDER) free(pPublicKeyDER);
     if (rsa_key) RSA_free(rsa_key);
+    if (privSerializedAttr) free(privSerializedAttr);
+    if (privAttr) free(privAttr);
     return ret;
 }
 

@@ -12,9 +12,7 @@
 
 
 void wrap_initialize(void (*func)(void)) {
-	printf("%s:%i\n", __FILE__, __LINE__);
     CK_RV ret = C_Initialize(NULL);
-	printf("%s:%i\n", __FILE__, __LINE__);
     CU_ASSERT_FATAL(CKR_OK == ret || ret == CKR_CRYPTOKI_NOT_INITIALIZED);
     if (func) func();
     CU_ASSERT_FATAL(CKR_OK == C_Finalize(NULL));
@@ -102,7 +100,6 @@ void test_C_GetMechanismList(){
 
 
 CU_pSuite pkcs11_suite(void){
-    printf("%s:%i\n", __FILE__, __LINE__);
     CU_pSuite pSuite = CU_add_suite("PKCS11", NULL, NULL);
     CU_add_test(pSuite, "initialize", test_initialize);
     CU_add_test(pSuite, "C_GetInfo", test_C_GetInfo);

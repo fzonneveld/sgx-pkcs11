@@ -19,9 +19,9 @@ RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength);
 
 int generateRSAKeyPair(
         uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
+        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> &pubAttrMap,
         uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
-		const uint8_t *pSerialAttr, size_t serialAttrLen,
-        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pAttrMap);
+        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> &privAttrMap);
 
 uint8_t *DecryptRsa(
         uint8_t *private_key_der, size_t privateKeyDERlength,

@@ -33,36 +33,40 @@ CK_ATTRIBUTE *getType(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pAttrMap, CK
 	return ret;
 }
 
-
 int SGXgenerateKeyPair(
         uint8_t *PublicKey, size_t PublicKeyLength, size_t *PublicKeyLengthOut,
+		uint8_t *pPublicSerializedAttr, size_t publicSerializedAttrLen, size_t *publicSerializedAttrLenOut,
         uint8_t *PrivateKey, size_t PrivateKeyLength, size_t *PrivateKeyLengthOut,
-		const uint8_t *pSerialAttr, size_t serialAttrLen) {
+		uint8_t *pPrivSerializedAttr, size_t privSerializedAttrLen, size_t *privSerializedAttrLenOut) {
 
 	int ret = -1;
-    CK_ATTRIBUTE_PTR pAttr = NULL;
-    CK_ATTRIBUTE_PTR attr_key_type;
-    CK_ULONG nrAttributes;
+    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubAttrMap, privAttrMap;
+	CK_ATTRIBUTE_PTR pKeyTypeAttr;
 
-    pAttr = attributeDeserialize(pSerialAttr, serialAttrLen, &nrAttributes);
-    if (pAttr == NULL) return -1;
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pAttrMap;
-    pAttrMap = attr2map(pAttr, nrAttributes);
-	// Check which type of key to generate....
-	if ((attr_key_type = getType(pAttrMap, CKA_KEY_TYPE, sizeof(CK_KEY_TYPE))) == NULL) return 1;
-	switch (*(CK_KEY_TYPE *)attr_key_type->pValue) {
+	Attribute pubAttr = Attribute(pPublicSerializedAttr, publicSerializedAttrLen);
+	Attribute privAttr = Attribute(pPrivSerializedAttr, privSerializedAttrLen);
+	if ((pKeyTypeAttr = pubAttr.get(CKA_KEY_TYPE)) == NULL) goto SGXgenerateKeyPair_err;
+	pubAttrMap = pubAttr.map();
+	privAttrMap = privAttr.map();
+	switch (*(CK_KEY_TYPE *)pKeyTypeAttr->pValue) {
 		case CKK_RSA:
-			ret = generateRSAKeyPair(
-				PublicKey, PublicKeyLength, PublicKeyLengthOut,
-				PrivateKey, PrivateKeyLength, PrivateKeyLengthOut,
-				pSerialAttr, serialAttrLen,
-				pAttrMap);
+			if ((ret = generateRSAKeyPair(
+					PublicKey, PublicKeyLength, PublicKeyLengthOut, pubAttrMap,
+					PrivateKey, PrivateKeyLength, PrivateKeyLengthOut, privAttrMap)) != 0) {
+				break;
+			}
+			if (attrMap2serialized(privAttrMap, pPrivSerializedAttr, *privSerializedAttrLenOut, privSerializedAttrLenOut))
+				break;
+			if (attrMap2serialized(pubAttrMap, pPublicSerializedAttr, *publicSerializedAttrLenOut, publicSerializedAttrLenOut))
+				break;
+			ret = 0;
 			break;
 		case CKK_EC:
 			break;
 		default:
 			break;
 	}
+SGXgenerateKeyPair_err:
 	return ret;
 }
 
@@ -80,11 +84,16 @@ int SGXEncryptRSA(
 		cipherTextLength, RSA_PKCS1_PADDING);
 }
 
-int SGXDecryptRSA(
+CK_ULONG supportedKeyTypes[] = {
+	CKK_RSA,
+	CKK_EC,
+};
+
+int SGXDecrypt(
         const uint8_t *private_key_ciphered,
         size_t private_key_ciphered_length,
-        const uint8_t *attributes,
-        size_t attributes_length,
+        const uint8_t *pSerializedAttr,
+        size_t serializedAttrLen,
         const uint8_t* ciphertext,
         size_t ciphertext_length,
         uint8_t* plaintext,
@@ -98,14 +107,17 @@ int SGXDecryptRSA(
 	uint8_t *private_key_der = NULL;
 	size_t privateKeyDERlength;
 	const uint8_t *rootkey;
+	CK_ULONG *pKeyType;
 
-    if ((rootkey=getRootKey(NULL)) == NULL) return ret;
+	Attribute attr = Attribute(pSerializedAttr, serializedAttrLen);
 
-	if (private_key_ciphered_length < (SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE)) goto SGXDecryptRSA_err;
+    if ((rootkey=getRootKey(NULL)) == NULL) goto SGXDecrypt_err;
+
+	if (private_key_ciphered_length < (SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE)) goto SGXDecrypt_err;
 	privateKeyDERlength = private_key_ciphered_length - (SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE);
 
-	if (NULL == (private_key_der = (uint8_t *)malloc(privateKeyDERlength))) goto SGXDecryptRSA_err;
-	ret = -2;
+
+	if (NULL == (private_key_der = (uint8_t *)malloc(privateKeyDERlength))) goto SGXDecrypt_err;
 	if (SGX_SUCCESS != sgx_rijndael128GCM_decrypt(
 		(sgx_aes_gcm_128bit_key_t *) rootkey,
 		private_key_ciphered + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
@@ -113,19 +125,26 @@ int SGXDecryptRSA(
 		private_key_der,
 		private_key_ciphered + SGX_AESGCM_MAC_SIZE,
 		SGX_AESGCM_IV_SIZE,
-		attributes, attributes_length,
-		(sgx_aes_gcm_128bit_tag_t *) private_key_ciphered)) goto SGXDecryptRSA_err;
-	ret  = -3;
-	if ((to = DecryptRsa(private_key_der, privateKeyDERlength, ciphertext, ciphertext_length, RSA_PKCS1_PADDING, &to_len)) == NULL) {
-		goto SGXDecryptRSA_err;
+		pSerializedAttr, serializedAttrLen,
+		(sgx_aes_gcm_128bit_tag_t *) private_key_ciphered)) goto SGXDecrypt_err;
+
+	if (attr.check(CKA_CLASS, CKO_PRIVATE_KEY) == false) goto SGXDecrypt_err;
+	if ((pKeyType = attr.checkIn(CKA_KEY_TYPE, supportedKeyTypes, sizeof supportedKeyTypes / sizeof *supportedKeyTypes)) == NULL) goto SGXDecrypt_err;
+
+	switch (*pKeyType) {
+		case CKK_RSA:
+			if ((to = DecryptRsa(private_key_der, privateKeyDERlength, ciphertext, ciphertext_length, RSA_PKCS1_PADDING, &to_len)) == NULL) {
+				goto SGXDecrypt_err;
+			}
+			break;
+		case CKK_EC:
+			goto SGXDecrypt_err;
 	}
-    ret = -6;
-    if ((size_t) to_len > plaintext_length) goto SGXDecryptRSA_err;
-    ret = -7;
+    if ((size_t) to_len > plaintext_length) goto SGXDecrypt_err;
     memcpy(plaintext, to, to_len);
     *plainTextLength = to_len;
     ret = 0;
-SGXDecryptRSA_err:
+SGXDecrypt_err:
 	if (to) free(to);
 	if (private_key_der) free(private_key_der);
     if (pKey) EVP_PKEY_free(pKey);
@@ -162,40 +181,5 @@ int SGXSetRootKeySealed(const uint8_t *root_key_sealed, size_t root_key_len_seal
 int SGXSetRootKeyShare(int x, const uint8_t *y, size_t y_length, int threshold)
 {
 	return SetRootKeyShare(x, y, y_length, threshold);
-
-//	static int local_threshold = 0;
-//	static int *x_s = NULL;
-//	static BIGNUM **y_s = NULL;
-//	static int nr_shares = 0;
-//
-//	if (SGX_SUCCESS != sgx_read_rand(rootKey, ROOTKEY_LENGTH)) goto setRootKeyShare_err;
-//	if (x_s == NULL) {
-//		local_threshold = threshold;
-//	}
-//	if (threshold != local_threshold) return -3;
-//	rootKeySet = CK_FALSE;
-//	if (threshold < 2) return -1;
-//	for (int i=0; i<nr_shares; i++) if (x_s[i] == x) return -2;
-//	x_s = (int *) realloc(x_s, sizeof *x_s * (nr_shares + 1));
-//	x_s[nr_shares] = x;
-//	y_s = (BIGNUM **) realloc(y_s, sizeof *y_s * (nr_shares + 1));
-//	y_s[nr_shares] = BN_new();
-//	BN_bin2bn(y, y_length, y_s[nr_shares]);
-//	x_s[nr_shares] = x;
-//	nr_shares += 1;
-//	if (nr_shares == threshold) {
-//		BIGNUM *res = BN_new();
-//		BIGNUM *prime = NULL;
-//		BN_hex2bn(&prime, PRIME);
-//		lagrange_interpolate(res, 0, x_s, y_s, nr_shares, prime);
-//		BN_bn2bin(res, rootKey);
-//		rootKeySet = CK_TRUE;
-//		local_threshold = 0;
-//		free(x_s); x_s = NULL;
-//		free(y_s); y_s = NULL;
-//		return 1;
-//	}
-//setRootKeyShare_err:
-//	return 0;
 }
 

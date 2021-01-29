@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <sqlite3.h>
 #include "CryptoEntity.h"
+#include "attribute.h"
 
 CryptoEntity::CryptoEntity() {
 	sgx_status_t ret = SGX_ERROR_UNEXPECTED;
@@ -47,21 +48,10 @@ CryptoEntity::CryptoEntity() {
 }
 
 #define MAX_KEY_BUF 8192
+#define MAX_ATTR_BUF 8192
 
 
-static void printhex(const char *s, unsigned char *buf, unsigned long length){
-    int i;
-    printf("%s", s);
-    for (i=0; i< (int)length; i++) {
-        if ((i % 16) == 0) printf("\n");
-        printf("%02X ", buf[i]);
-    }
-    printf("\n");
-}
-
-
-
-void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t *pSerialAttr, size_t serialAttrLen) {
+void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength, uint8_t **publicSerializedAttr, size_t *pPubAttrLen, uint8_t **pPrivateKey, size_t *pPrivateKeyLength, uint8_t **privSerializedAttr, size_t *pPrivAttrLen) {
 	sgx_status_t stat;
     int ret;
 
@@ -72,16 +62,34 @@ void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength,
     *pPublicKey = (uint8_t *)calloc(*pPublicKeyLength, 1);
     *pPrivateKey = (uint8_t *)calloc(*pPrivateKeyLength, 1);
 
-    printhex("attr", pSerialAttr, serialAttrLen);
-	stat = SGXgenerateKeyPair(this->enclave_id_, &ret, *pPublicKey, *pPublicKeyLength, pPublicKeyLength, *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength, pSerialAttr, serialAttrLen);
-    printhex("attr", pSerialAttr, serialAttrLen);
+    if (*pPubAttrLen > MAX_ATTR_BUF || *pPrivAttrLen > MAX_ATTR_BUF) return;
+
+    *publicSerializedAttr = (uint8_t *) realloc(*publicSerializedAttr, MAX_ATTR_BUF);
+    size_t pubAttrLen = *pPubAttrLen;
+    *pPubAttrLen = MAX_ATTR_BUF;
+    *privSerializedAttr = (uint8_t *) realloc(*privSerializedAttr, MAX_ATTR_BUF);
+    size_t privAttrLen = *pPrivAttrLen;
+    *pPrivAttrLen = MAX_ATTR_BUF;
+
+	stat = SGXgenerateKeyPair(
+        this->enclave_id_, &ret,
+         *pPublicKey, *pPublicKeyLength, pPublicKeyLength,
+         *publicSerializedAttr, pubAttrLen, pPubAttrLen,
+         *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength,
+         *privSerializedAttr, privAttrLen, pPrivAttrLen);
 	if (stat != SGX_SUCCESS || ret != 0) {
+        printf("%s:%i ret=%i\n", __FILE__, __LINE__, ret);
 		free(*pPublicKey);
 		free(*pPrivateKey);
 		throw new std::exception;
 	}
 	*pPublicKey = (uint8_t *)realloc(*pPublicKey, *pPublicKeyLength);
 	*pPrivateKey = (uint8_t *)realloc(*pPrivateKey, *pPrivateKeyLength);
+
+    *publicSerializedAttr = (uint8_t *)realloc(*publicSerializedAttr, *pPubAttrLen);
+    // *pPubAttrLen = pubAttrLen;
+    *privSerializedAttr = (uint8_t *)realloc(*privSerializedAttr, *pPrivAttrLen);
+    // *pPrivAttrLen = privAttrLen;
 }
 
 unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
@@ -98,13 +106,16 @@ unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, co
 	return cipherData;
 }
 
+void printAttr(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes);
+void printAttrSerialized(uint8_t *pAttrserialized, size_t attrSerializedLen);
+
 uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
 	sgx_status_t stat;
     int max_rsa_size = 8 * 1024;
 
 	uint8_t* plainData = (uint8_t*)malloc(max_rsa_size * sizeof(uint8_t));
     int retval;
-	stat = SGXDecryptRSA(
+	stat = SGXDecrypt(
             this->enclave_id_,
             &retval,
 			key, keyLength,
@@ -112,6 +123,7 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t 
 			cipherData, cipherDataLength,
 			plainData, max_rsa_size, plainLength);
 	if (stat != SGX_SUCCESS || retval != 0) {
+        printf("%s:%i retval=0x%x\n", __FILE__, __LINE__, retval);
 		throw std::runtime_error("Decryption failed\n");
     }
 	return plainData;
@@ -126,7 +138,6 @@ int CryptoEntity::GenerateRandom(uint8_t *random, size_t random_length) {
             &retval,
 			random, random_length);
 	if (stat != SGX_SUCCESS || retval != 0) {
-        printf("%s:%ii retval=%i\n", __FILE__, __LINE__, retval);
 		throw std::runtime_error("Generate random failed");
     }
     return 0;
@@ -139,9 +150,6 @@ size_t CryptoEntity::GetSealedRootKeySize() {
 
 	stat = SGXGetSealedRootKeySize(this->enclave_id_, &retval, &rootKeySealedLength);
 	if (stat != SGX_SUCCESS || retval) {
-        printf("Stat=%i\n", stat);
-        printf("Retval=%i\n", retval);
-        printf("rootKeySealedLength=%lu\n", rootKeySealedLength);
 		throw std::runtime_error("Getting root key size failed failed\n");
     }
     return rootKeySealedLength;

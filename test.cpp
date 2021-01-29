@@ -86,11 +86,23 @@ void printhex(const char *s, unsigned char *buf, unsigned long length){
 #define DEFAULT_RUNS 1000
 
 map<int, string> c_mechanisms = {
+    // RSA
     {CKM_RSA_PKCS_KEY_PAIR_GEN, "CKM_RSA_PKCS_KEY_PAIR_GEN"},
     {CKM_RSA_PKCS, "CKM_RSA_PKCS"},
+    {CKM_SHA256_RSA_PKCS, "CKM_SHA256_RSA_PKCS"},
+    {CKM_SHA384_RSA_PKCS, "CKM_SHA384_RSA_PKCS"},
+    {CKM_SHA512_RSA_PKCS, "CKM_SHA512_RSA_PKCS"},
+    {CKM_SHA256_RSA_PKCS_PSS, "CKM_SHA256_RSA_PKCS_PSS"},
+    {CKM_SHA384_RSA_PKCS_PSS, "CKM_SHA384_RSA_PKCS_PSS"},
+    {CKM_SHA512_RSA_PKCS_PSS, "CKM_SHA512_RSA_PKCS_PSS"},
+    {CKM_SHA224_RSA_PKCS, "CKM_SHA224_RSA_PKCS"},
+    {CKM_SHA224_RSA_PKCS_PSS, "CKM_SHA224_RSA_PKCS_PSS"},
+    // EC
+    {CKM_EC_KEY_PAIR_GEN, "CKM_EC_KEY_PAIR_GEN"},
+    {CKM_ECDSA, "CKM_ECDSA"},
 };
 
-#define USAGE {cout << "Usage: [-v] " << argv[0] << " <pkcs11 lib>" << endl;}
+#define USAGE {cout << "Usage: [-i SOPIN] [-v] [-c] " << argv[0] << " <pkcs11 lib>" << endl;}
 
 int main(int argc, char *argv[]) {
     void *d;
@@ -164,6 +176,8 @@ int main(int argc, char *argv[]) {
         map<int, string>::const_iterator iter = c_mechanisms.find(pMechanismList[i]);
         if (iter != c_mechanisms.end()) {
             cout << "\t" << "[0x" << setfill('0') << setw(8) << pMechanismList[i] << "]" << iter->second << "\n";
+        } else {
+            cout << "\t" << "[0x" << setfill('0') << setw(8) << pMechanismList[i] << "] <unknown>\n";
         }
     }
     PKCS11_CALL(C_OpenSession, slots[0], CKF_SERIAL_SESSION, (CK_VOID_PTR) NULL, NULL, &session);

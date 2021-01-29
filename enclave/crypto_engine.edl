@@ -4,14 +4,21 @@ from "sgx_tsgxssl.edl" import *;
 
 	trusted {
 		public int SGXgenerateKeyPair(
-			[out, count=publicKeyLength]uint8_t* RSAPublicKey,
-            size_t publicKeyLength,
-            [user_check]size_t *publicKeyLengthOut,
+			[out, count=pubKeyLength]uint8_t* RSAPublicKey,
+            size_t pubKeyLength,
+            [user_check]size_t *pubKeyLengthOut,
+
+            [user_check]uint8_t *pubSerializedAttr,
+			size_t pubSerializedAttrLen,
+			[user_check] size_t *pubSerializedAttrLenOut,
+
 			[out, count=privateKeyLength]uint8_t* RSAPrivateKey,
             size_t privateKeyLength,
-			[user_check]size_t *privateKeyLengthOut,
-            [in, readonly, count=serialAttrLen]const uint8_t *pSerialAttr,
-			size_t serialAttrLen
+			[user_check] size_t *privateKeyLengthOut,
+
+            [user_check]uint8_t *privSerializedAttr,
+			size_t privSerializedAttrLen,
+			[user_check] size_t *privSerializedAttrLenOut
 		);
 
 		public int SGXEncryptRSA(
@@ -21,12 +28,12 @@ from "sgx_tsgxssl.edl" import *;
             [user_check]size_t* cipherTextLength
 		);
 
-		public int SGXDecryptRSA(
+		public int SGXDecrypt(
             [in, readonly, count=private_key_ciphered_length]const unsigned char* private_key_ciphered,
             size_t private_key_ciphered_length,
-            [in, readonly, count=private_key_ciphered_length]const unsigned char* attributes,
-            size_t attributes_length,
-            [in, readonly, count=ciphertext_length]const unsigned char* ciphertext, 
+            [in, readonly, count=private_key_ciphered_length]const unsigned char* pSerializedAttr,
+            size_t serializedAttrLen,
+            [in, readonly, count=ciphertext_length]const unsigned char* ciphertext,
             size_t ciphertext_length,
             [out, count=plaintext_length]unsigned char* plaintext,
             size_t plaintext_length,
