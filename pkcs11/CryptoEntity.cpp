@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <sqlite3.h>
 #include "CryptoEntity.h"
-#include "attribute.h"
+#include "Attribute.h"
 
 CryptoEntity::CryptoEntity() {
 	sgx_status_t ret = SGX_ERROR_UNEXPECTED;
@@ -78,7 +78,7 @@ void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength,
          *pPrivateKey, *pPrivateKeyLength,  pPrivateKeyLength,
          *privSerializedAttr, privAttrLen, pPrivAttrLen);
 	if (stat != SGX_SUCCESS || ret != 0) {
-        printf("%s:%i ret=%i\n", __FILE__, __LINE__, ret);
+        printf("%s:%i ret=%lx\n", __FILE__, __LINE__, (unsigned long)ret);
 		free(*pPublicKey);
 		free(*pPrivateKey);
 		throw new std::exception;
@@ -87,9 +87,7 @@ void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength,
 	*pPrivateKey = (uint8_t *)realloc(*pPrivateKey, *pPrivateKeyLength);
 
     *publicSerializedAttr = (uint8_t *)realloc(*publicSerializedAttr, *pPubAttrLen);
-    // *pPubAttrLen = pubAttrLen;
     *privSerializedAttr = (uint8_t *)realloc(*privSerializedAttr, *pPrivAttrLen);
-    // *pPrivAttrLen = privAttrLen;
 }
 
 unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
@@ -105,9 +103,6 @@ unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, co
     }
 	return cipherData;
 }
-
-void printAttr(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes);
-void printAttrSerialized(uint8_t *pAttrserialized, size_t attrSerializedLen);
 
 uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
 	sgx_status_t stat;

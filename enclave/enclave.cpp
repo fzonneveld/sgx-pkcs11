@@ -17,7 +17,8 @@
 #include "openssl/err.h"
 
 #include "rsa.h"
-#include "attribute.h"
+#include "Attribute.h"
+#include "AttributeSerial.h"
 #include "ssss.h"
 #include "arm.h"
 
@@ -39,35 +40,29 @@ int SGXgenerateKeyPair(
         uint8_t *PrivateKey, size_t PrivateKeyLength, size_t *PrivateKeyLengthOut,
 		uint8_t *pPrivSerializedAttr, size_t privSerializedAttrLen, size_t *privSerializedAttrLenOut) {
 
-	int ret = -1;
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubAttrMap, privAttrMap;
 	CK_ATTRIBUTE_PTR pKeyTypeAttr;
 
-	Attribute pubAttr = Attribute(pPublicSerializedAttr, publicSerializedAttrLen);
-	Attribute privAttr = Attribute(pPrivSerializedAttr, privSerializedAttrLen);
-	if ((pKeyTypeAttr = pubAttr.get(CKA_KEY_TYPE)) == NULL) goto SGXgenerateKeyPair_err;
-	pubAttrMap = pubAttr.map();
-	privAttrMap = privAttr.map();
+	AttributeSerial pubAttr = AttributeSerial(pPublicSerializedAttr, publicSerializedAttrLen);
+	AttributeSerial privAttr = AttributeSerial(pPrivSerializedAttr, privSerializedAttrLen);
+	if ((pKeyTypeAttr = pubAttr.get(CKA_KEY_TYPE)) == NULL) return -1;
 	switch (*(CK_KEY_TYPE *)pKeyTypeAttr->pValue) {
-		case CKK_RSA:
-			if ((ret = generateRSAKeyPair(
-					PublicKey, PublicKeyLength, PublicKeyLengthOut, pubAttrMap,
-					PrivateKey, PrivateKeyLength, PrivateKeyLengthOut, privAttrMap)) != 0) {
-				break;
-			}
-			if (attrMap2serialized(privAttrMap, pPrivSerializedAttr, *privSerializedAttrLenOut, privSerializedAttrLenOut))
-				break;
-			if (attrMap2serialized(pubAttrMap, pPublicSerializedAttr, *publicSerializedAttrLenOut, publicSerializedAttrLenOut))
-				break;
-			ret = 0;
-			break;
-		case CKK_EC:
-			break;
-		default:
-			break;
+	 	case CKK_RSA: {
+                if (generateRSAKeyPair(
+                        PublicKey, PublicKeyLength, PublicKeyLengthOut, pubAttr,
+                        PrivateKey, PrivateKeyLength, PrivateKeyLengthOut, privAttr)) {
+                    return -1;
+                }
+         		if (privAttr.serialize(pPrivSerializedAttr, *privSerializedAttrLenOut, privSerializedAttrLenOut))
+         		   	return -2;
+                if (pubAttr.serialize(pPublicSerializedAttr, *publicSerializedAttrLenOut, publicSerializedAttrLenOut))
+                    return -3;
+                return 0;
+            }
+	 	case CKK_EC:
+	 		return -1;
+	 	default:
+	 		return -1;
 	}
-SGXgenerateKeyPair_err:
-	return ret;
 }
 
 
@@ -109,7 +104,7 @@ int SGXDecrypt(
 	const uint8_t *rootkey;
 	CK_ULONG *pKeyType;
 
-	Attribute attr = Attribute(pSerializedAttr, serializedAttrLen);
+	AttributeSerial attr = AttributeSerial(pSerializedAttr, serializedAttrLen);
 
     if ((rootkey=getRootKey(NULL)) == NULL) goto SGXDecrypt_err;
 
@@ -118,6 +113,7 @@ int SGXDecrypt(
 
 
 	if (NULL == (private_key_der = (uint8_t *)malloc(privateKeyDERlength))) goto SGXDecrypt_err;
+    ret -= 1;
 	if (SGX_SUCCESS != sgx_rijndael128GCM_decrypt(
 		(sgx_aes_gcm_128bit_key_t *) rootkey,
 		private_key_ciphered + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
@@ -128,7 +124,8 @@ int SGXDecrypt(
 		pSerializedAttr, serializedAttrLen,
 		(sgx_aes_gcm_128bit_tag_t *) private_key_ciphered)) goto SGXDecrypt_err;
 
-	if (attr.check(CKA_CLASS, CKO_PRIVATE_KEY) == false) goto SGXDecrypt_err;
+    ret -= 1;
+	if (attr.check<CK_ULONG>(CKA_CLASS, CKO_PRIVATE_KEY) == false) goto SGXDecrypt_err;
 	if ((pKeyType = attr.checkIn(CKA_KEY_TYPE, supportedKeyTypes, sizeof supportedKeyTypes / sizeof *supportedKeyTypes)) == NULL) goto SGXDecrypt_err;
 
 	switch (*pKeyType) {

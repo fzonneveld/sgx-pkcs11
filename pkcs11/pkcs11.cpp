@@ -8,8 +8,8 @@
 
 #include "pkcs11-interface.h"
 
-#include "attribute.h"
-#include "attribute.h"
+#include "Attribute.h"
+#include "AttributeSerial.h"
 #include "Database.h"
 
 
@@ -39,7 +39,6 @@ CK_FUNCTION_LIST functionList = {
 void printAttr(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes) {
     for (size_t i=0; i<nrAttributes; i++) {
         CK_ATTRIBUTE_PTR a = pAttr + i;
-        printf("Attribute[%04lu] type 0x%08lx, value[%lu] ", i, a->type, a->ulValueLen);
         for (size_t j=0; j<a->ulValueLen; j++) {
             printf("%02X ", ((uint8_t *)a->pValue)[j]);
         }
@@ -335,18 +334,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetMechanismInfo)(CK_SLOT_ID slotID, CK_MECHANISM_TY
     }
     return CKR_OK;
 }
-
-// void printhex(const char *s, unsigned char *buf, unsigned long length){
-//     int i;
-//     printf("%s[%lu]", s, length);
-//     for (i=0; i< (int)length; i++) {
-//         if ((i % 16) == 0) printf("\n");
-//         printf("%02X ", buf[i]);
-//     }
-//     printf("\n");
-// }
-
-
 
 CK_DEFINE_FUNCTION(CK_RV, C_InitToken)(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen, CK_UTF8CHAR_PTR pLabel)
 {
@@ -926,92 +913,90 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 
 CK_RV GenerateKeyPairRSA(
     pkcs11_session_t *session,
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> publicKeyAttrMap,
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> privateKeyAttrMap,
+    // std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> publicKeyAttrMap,
+    Attribute pubAttr,
+    // std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> privateKeyAttrMap,
+    Attribute privAttr,
 	CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
 	CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
 	CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey) {
 
-    if (publicKeyAttrMap.count(CKA_MODULUS_BITS) == 0) return CKR_TEMPLATE_INCONSISTENT;
-    CK_ATTRIBUTE_PTR bitLenAttrPtr = publicKeyAttrMap[CKA_MODULUS_BITS];
-    if (sizeof(CK_ULONG) != bitLenAttrPtr->ulValueLen) return CKR_ATTRIBUTE_VALUE_INVALID;
+    CK_ULONG *pModulusBits;
+    if ((pModulusBits = pubAttr.getType<CK_ULONG>(CKA_MODULUS_BITS)) == NULL) return CKR_TEMPLATE_INCONSISTENT;
 
-	uint8_t* publicKey = NULL;
+	uint8_t* pPublicKey = NULL;
 	size_t publicKeyLength;
-	uint8_t* privateKey = NULL;
+	uint8_t* pPrivateKey = NULL;
 	size_t privateKeyLength;
     size_t privAttrLen, pubAttrLen;
     uint8_t *privSerializedAttr, *publicSerializedAttr;
-	pkcs11_object_t *pub, *pro;
 
     CK_RV ret = CKR_OK;
-    CK_BBOOL token;
-    if ((ret != getAttrBool(publicKeyAttrMap, CKA_TOKEN, CK_FALSE, &token)) != CKR_OK) {
-        return ret;
-    }
-    if (token) {
+    CK_BBOOL *pToken;
+
+    if ((pToken = pubAttr.getType<CK_BBOOL>(CKA_TOKEN)) == NULL) return CKR_ATTRIBUTE_VALUE_INVALID;
+    if (*pToken) {
 		CK_KEY_TYPE keyType = CKK_RSA;
         // Store in memory, return a pointer to allocated attributes...
 		// Public key
         CK_ULONG modulusBits = 2048;
-        CK_BBOOL isPrivate = CK_TRUE;
+        CK_BBOOL trueValue = CK_TRUE;
+        CK_BBOOL falseValue = CK_FALSE;
 		CK_ATTRIBUTE publicKeyAttribs[] = {
-			{ CKA_TOKEN, &token, sizeof(token) },
+			{ CKA_TOKEN, pToken, sizeof(*pToken) },
             { CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)},
-            { CKA_PRIVATE, &isPrivate, sizeof(isPrivate)},
+            { CKA_PRIVATE, &falseValue, sizeof(falseValue)},
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
-		pub = (pkcs11_object_t *)malloc(sizeof *pub);
-		pub->pAttributes = attrMerge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs, pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub->ulAttributeCount);
-;
+        pubAttr.merge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs);
 		// Private key
-		CK_ATTRIBUTE privateKeyAttr[] = {
-			{ CKA_TOKEN, &token, sizeof(token)},
-            { CKA_PRIVATE, &isPrivate, sizeof(isPrivate)},
+		CK_ATTRIBUTE privateKeyAttribs[] = {
+			{ CKA_TOKEN, pToken, sizeof(*pToken)},
+            { CKA_PRIVATE, &trueValue, sizeof(trueValue)},
 			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
 		};
-		pro = (pkcs11_object_t *)malloc(sizeof *pro);
-		pro->pAttributes = attrMerge(privateKeyAttr, sizeof privateKeyAttr / sizeof *privateKeyAttr, pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &pro->ulAttributeCount);
+        privAttr.merge(privateKeyAttribs, sizeof privateKeyAttribs / sizeof *privateKeyAttribs);
     } else {
 		// For now session objects not supported
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
-    privSerializedAttr = attributeSerialize(pro->pAttributes, pro->ulAttributeCount, &privAttrLen);
-    publicSerializedAttr = attributeSerialize(pub->pAttributes, pub->ulAttributeCount, &pubAttrLen);
+    publicSerializedAttr = pubAttr.serialize(&pubAttrLen);
+    privSerializedAttr = privAttr.serialize(&privAttrLen);
 
 	try {
 		crypto->KeyGeneration(
-			&publicKey, &publicKeyLength, &publicSerializedAttr, &pubAttrLen, &privateKey, &privateKeyLength, &privSerializedAttr, &privAttrLen);
+			&pPublicKey, &publicKeyLength, &publicSerializedAttr, &pubAttrLen, &pPrivateKey, &privateKeyLength, &privSerializedAttr, &privAttrLen);
 	}
 	catch (std::exception e) {
 		return CKR_DEVICE_ERROR;
 	}
 
-    pub->pValue = publicKey;
-    pub->valueLength = publicKeyLength;
-
-    pro->pValue = privateKey;
-    pro->valueLength = privateKeyLength;
-
-    if ((pub->pAttributes = attributeDeserialize(publicSerializedAttr, pubAttrLen, &pub->ulAttributeCount)) == NULL) {
-        return CKR_DEVICE_ERROR;
-    }
-    if ((pro->pAttributes = attributeDeserialize(privSerializedAttr, privAttrLen, &pro->ulAttributeCount)) == NULL) {
-        return CKR_DEVICE_ERROR;
-    }
-
-
     int privHandle;
-    if (0 > (privHandle = db->setObject(CKO_PRIVATE_KEY, pro->pValue, pro->valueLength, pro->pAttributes, pro->ulAttributeCount))) {
+    CK_ATTRIBUTE_PTR pPrivAttributes;
+    CK_ULONG privAttributesCnt;
 
-        return CKR_DEVICE_ERROR;
-    }
-    *phPrivateKey = (CK_ULONG)privHandle;
+    AttributeSerial pubAttr2 = AttributeSerial(publicSerializedAttr, pubAttrLen);
+    AttributeSerial privAttr2 = AttributeSerial(privSerializedAttr, privAttrLen);
+
+    pPrivAttributes = privAttr2.attributes(privAttributesCnt);
+
     int pubHandle;
-    if (0 > (pubHandle = db->setObject(CKO_PUBLIC_KEY, pub->pValue, pub->valueLength, pub->pAttributes, pub->ulAttributeCount))) {
+    CK_ATTRIBUTE_PTR pPubAttributes;
+    CK_ULONG pubAttributesCnt;
+
+    pPubAttributes = pubAttr2.attributes(pubAttributesCnt);
+
+    if (0 > (pubHandle = db->setObject(CKO_PUBLIC_KEY, pPublicKey, publicKeyLength, pPubAttributes, pubAttributesCnt))) {
         return CKR_DEVICE_ERROR;
     }
     *phPublicKey = (CK_ULONG)pubHandle;
+
+    pPrivAttributes = privAttr2.attributes(privAttributesCnt);
+
+    if (0 > (privHandle = db->setObject(CKO_PRIVATE_KEY, pPrivateKey, privateKeyLength, pPrivAttributes, privAttributesCnt))) {
+        return CKR_DEVICE_ERROR;
+    }
+    *phPrivateKey = (CK_ULONG)privHandle;
 	return ret;
 }
 

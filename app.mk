@@ -48,7 +48,7 @@ else
 	Urts_Library_Name := sgx_urts
 endif
 
-App_Cpp_Files := pkcs11/CryptoEntity.cpp pkcs11/pkcs11.cpp pkcs11/TestApp.cpp pkcs11/attribute.cpp pkcs11/Database.cpp
+App_Cpp_Files := pkcs11/CryptoEntity.cpp pkcs11/pkcs11.cpp pkcs11/TestApp.cpp pkcs11/Attribute.cpp pkcs11/AttributeSerial.cpp pkcs11/Database.cpp
 App_Include_Paths := -Ipkcs11 -I$(SGX_SDK)/include -I$(OPENSSL_PATH)/include
 
 App_C_Flags := $(SGX_COMMON_CFLAGS) -fPIC -Wno-attributes $(App_Include_Paths)
@@ -97,7 +97,7 @@ pkcs11/%.o: pkcs11/%.cpp
 	@$(CXX) $(App_Cpp_Flags) -c $< -o $@
 	@echo "C++ compile  <=  $<"
 
-pkcs11/pkcs11.so: pkcs11/pkcs11_module_u.o pkcs11/CryptoEntity.o pkcs11/pkcs11.o pkcs11/attribute.o pkcs11/Database.o
+pkcs11/pkcs11.so: pkcs11/pkcs11_module_u.o pkcs11/CryptoEntity.o pkcs11/pkcs11.o pkcs11/Attribute.o pkcs11/AttributeSerial.o pkcs11/Database.o
 	$(CXX) -shared  -fPIC -o $@  $^ $(App_Link_Flags)
 	@echo "Created shared lib $<"
 

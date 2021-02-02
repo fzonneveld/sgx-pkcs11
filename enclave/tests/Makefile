@@ -1,4 +1,4 @@
-OBJECTS = enclave.o attribute.o ssss.o rsa.o ec.o arm.o
+OBJECTS = enclave.o Attribute.o ssss.o rsa.o ec.o arm.o
 TEST_OBJECTS = tst.o stubs.o test_rsa.o test_ssss.o
 LDLIBS = -lssl -lcrypto -lstdc++ -lcunit -lpthread
 

@@ -1,6 +1,6 @@
 OPENSSL_PATH ?= /usr/local/ssl
 # LOCAL_OBJECTS=stubs.o
-OBJECTS = attribute.o pkcs11.o Database.o CryptoEntity.o
+OBJECTS = Attribute.o AttributeSerial.o pkcs11.o Database.o CryptoEntity.o
 C_OBJECTS = crypto_engine_u.o
 TEST_OBJECTS = tst.o test_pkcs11.o test_attribute.o
 

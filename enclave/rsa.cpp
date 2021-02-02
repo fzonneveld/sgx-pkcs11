@@ -1,6 +1,5 @@
 #include "rsa.h"
 #include "arm.h"
-#include "attribute.h"
 
 #include "sgx_tseal.h"
 #include "sgx_trts.h"
@@ -70,12 +69,12 @@ std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> defaultPublicKeyAttrMap = ATTR2MAP
 
 int generateRSAKeyPair(
         uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
-        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> &pubAttrMap,
+        Attribute &pubAttr,
         uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
-        std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> &privAttrMap){
+        Attribute &privAttr){
 
-    CK_ATTRIBUTE_PTR attr_modulus_bits = getAttr(pubAttrMap, CKA_MODULUS_BITS);
-    CK_ATTRIBUTE_PTR attr_public_exponent = getAttr(pubAttrMap, CKA_PUBLIC_EXPONENT);
+    CK_ATTRIBUTE_PTR attr_modulus_bits = pubAttr.get(CKA_MODULUS_BITS);
+    CK_ATTRIBUTE_PTR attr_public_exponent = pubAttr.get(CKA_PUBLIC_EXPONENT);
     int ret = -1;
     RSA *rsa_key = NULL;
     size_t privateKeyDERlength, publicKeyLength;
@@ -86,12 +85,10 @@ int generateRSAKeyPair(
     const unsigned char *exponent = NULL;
     size_t exponentLength = 0;
     uint8_t *privSerializedAttr  = NULL; size_t privSerLen = 0;
-    CK_ATTRIBUTE_PTR privAttr = NULL; size_t nrPrivAttr;
 
     CK_BBOOL tr = CK_TRUE;
-    bool priv_decrypt = checkAttr(privAttrMap, CKA_DECRYPT, &tr, sizeof tr);
-    bool priv_sign = checkAttr(privAttrMap, CKA_SIGN, &tr, sizeof tr);
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubMap, privMap;
+    bool priv_decrypt = privAttr.check(CKA_DECRYPT, tr);
+    bool priv_sign = privAttr.check(CKA_SIGN, tr);
 
     if ((rootKey = getRootKey(NULL)) == NULL) goto generateRSAKeyPair_err;
 
@@ -118,12 +115,11 @@ int generateRSAKeyPair(
 
 	if (SGX_SUCCESS != sgx_read_rand(RSAPrivateKey + SGX_AESGCM_MAC_SIZE, SGX_AESGCM_IV_SIZE)) goto generateRSAKeyPair_err;
 
-    pubMap = attrMergeMaps(defaultPublicKeyAttrMap, pubAttrMap);
-    privMap = attrMergeMaps(defaultPrivateKKeyAttrMap, privAttrMap);
-    pubAttrMap = pubMap;
-    privAttrMap = privMap;
-    if ((privAttr = map2attr(privAttrMap, &nrPrivAttr)) == NULL) goto generateRSAKeyPair_err;
-    if ((privSerializedAttr = attributeSerialize(privAttr,  nrPrivAttr, &privSerLen)) == NULL) goto generateRSAKeyPair_err;
+    pubAttr.merge(defaultPublicKeyAttrMap);
+    privAttr.merge(defaultPrivateKKeyAttrMap);
+
+    if ((privSerializedAttr = privAttr.serialize(&privSerLen)) == NULL) goto generateRSAKeyPair_err;
+
 	if (SGX_SUCCESS != sgx_rijndael128GCM_encrypt(
 		(sgx_aes_gcm_128bit_key_t *) rootKey,
 		pPrivateKeyDER, privateKeyDERlength,
@@ -142,7 +138,6 @@ generateRSAKeyPair_err:
     if (pPublicKeyDER) free(pPublicKeyDER);
     if (rsa_key) RSA_free(rsa_key);
     if (privSerializedAttr) free(privSerializedAttr);
-    if (privAttr) free(privAttr);
     return ret;
 }
 
