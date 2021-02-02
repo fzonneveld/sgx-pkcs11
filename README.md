@@ -4,7 +4,8 @@ This is a fork from https://github.com/mlavacca/sgx-pkcs11
 
 The main goal of this forl is to create a fully functional
 PKCS#11 device, where all the keys are protected using
-the sgx enclave architecture.
+the SGX enclave architecture.
+
 
 
 ## Extended original sgx-pkcs11 with following features:
@@ -24,6 +25,7 @@ the sgx enclave architecture.
 ## Wishlist:
   * Add support for EC
   * Add support for symmetric key generation
+  * Add support for remote attestaion
 
 
 ## Build (Copy from the original code)
