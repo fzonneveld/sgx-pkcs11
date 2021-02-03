@@ -95,7 +95,7 @@ unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, co
 	unsigned char* cipherData = (unsigned char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(unsigned char));
     int retval;
 
-	ret = SGXEncryptRSA(this->enclave_id_, &retval, key, keyLength,
+	ret = SGXEncrypt(this->enclave_id_, &retval, key, keyLength,
 		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
 
 	if (ret != SGX_SUCCESS || retval != 0) {

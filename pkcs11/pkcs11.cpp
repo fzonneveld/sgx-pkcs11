@@ -48,9 +48,10 @@ void printAttr(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes) {
 
 
 void printAttrSerialized(uint8_t *pAttrserialized, size_t attrSerializedLen){
-    size_t nrAttributes;
+    CK_ULONG nrAttributes;
 
-    CK_ATTRIBUTE_PTR pAttr = attributeDeserialize(pAttrserialized, attrSerializedLen, &nrAttributes);
+    AttributeSerial attr = AttributeSerial(pAttrserialized, attrSerializedLen);
+    CK_ATTRIBUTE_PTR pAttr = attr.attributes(nrAttributes);
     if (pAttr == NULL) return;
     printAttr(pAttr, nrAttributes);
     free(pAttr);
@@ -691,25 +692,29 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 	if (NULL == pMechanism)
 		return CKR_ARGUMENTS_BAD;
 
-	switch (pMechanism->mechanism)
-	{
-        case CKM_RSA_PKCS:
-            if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
-                return CKR_MECHANISM_PARAM_INVALID;
-
-            break;
-        default:
-            return CKR_MECHANISM_INVALID;
-	}
-
-
     pkcs11_object_t *o = &s->Decrypt;
     if (db->getObject(hKey, &o->pValue, o->valueLength, &o->pAttributes, o->ulAttributeCount)) {
         return CKR_DEVICE_ERROR;
     }
 
-	s->operation = PKCS11_CK_OPERATION_DECRYPT;
+    Attribute a = Attribute(o->pAttributes, o->ulAttributeCount);
+    CK_OBJECT_CLASS_PTR pObjectClass = a.getType<CK_OBJECT_CLASS>(CKA_CLASS);
+    CK_KEY_TYPE *pKeyType = a.getType<CK_KEY_TYPE>(CKA_KEY_TYPE);
 
+	switch (pMechanism->mechanism)
+	{
+        case CKM_RSA_PKCS: {
+                if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
+                    return CKR_MECHANISM_PARAM_INVALID;
+                if (*pObjectClass != CKO_PRIVATE_KEY || *pKeyType != CKK_RSA)
+                    return CKR_OBJECT_HANDLE_INVALID;
+            }
+            break;
+
+        default:
+            return CKR_MECHANISM_INVALID;
+	}
+	s->operation = PKCS11_CK_OPERATION_DECRYPT;
 	return CKR_OK;
 }
 
@@ -736,7 +741,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
         CK_ULONG resLength;
         uint8_t *serialized_attr;
         size_t attrLen;
-        serialized_attr = attributeSerialize(s->Decrypt.pAttributes, s->Decrypt.ulAttributeCount, &attrLen);
+        Attribute attr = Attribute(s->Decrypt.pAttributes, s->Decrypt.ulAttributeCount);
+        serialized_attr = attr.serialize(&attrLen);
 		CK_BYTE_PTR res = crypto->RSADecrypt(s->Decrypt.pValue, s->Decrypt.valueLength, serialized_attr, attrLen, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
         if (res == NULL) {
             return CKR_DEVICE_ERROR;
@@ -754,7 +760,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 	}
 
 	s->operation = PKCS11_CK_OPERATION_NONE;
-
 	return CKR_OK;
 }
 
@@ -1014,34 +1019,31 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
 	if (NULL == phPublicKey) return CKR_ARGUMENTS_BAD;
 	if (NULL == phPrivateKey) return CKR_ARGUMENTS_BAD;
 
+
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubKeyAttrMap;
-    pubKeyAttrMap = attr2map(pPublicKeyTemplate, ulPublicKeyAttributeCount);
+    Attribute pubAttr = Attribute(pPublicKeyTemplate, ulPublicKeyAttributeCount);
+    Attribute privAttr = Attribute(pPrivateKeyTemplate, ulPrivateKeyAttributeCount);
 
-    CK_ATTRIBUTE_PTR pPubAttrKeyType, pPubAttrObjectClass;
-    pPubAttrObjectClass  = getAttr(pubKeyAttrMap, CKA_CLASS);
-    if ((pPubAttrKeyType  = getAttr(pubKeyAttrMap, CKA_KEY_TYPE)) == NULL) return CKR_TEMPLATE_INCONSISTENT;
+    CK_OBJECT_CLASS *pPubKeyObjectClass, *pPrivKeyObjectClass;
+    CK_KEY_TYPE *pPubKeyType, *pPrivKeyType;
+    if ((pPubKeyObjectClass  = pubAttr.getType<CK_OBJECT_CLASS>(CKA_CLASS)) != NULL && *pPubKeyObjectClass != CKO_PUBLIC_KEY)
+        return CKR_ATTRIBUTE_TYPE_INVALID;
+    pPubKeyType  = pubAttr.getType<CK_ULONG>(CKA_KEY_TYPE);
 
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> privKeyAttrMap;
-    privKeyAttrMap = attr2map(pPrivateKeyTemplate, ulPrivateKeyAttributeCount);
 
-    CK_ATTRIBUTE_PTR pPrivAttrKeyType, pPrivAttrObjectClass;
-    pPrivAttrObjectClass  = getAttr(privKeyAttrMap, CKA_CLASS);
-    if ((pPrivAttrKeyType  = getAttr(privKeyAttrMap, CKA_KEY_TYPE)) == NULL) return CKR_TEMPLATE_INCONSISTENT;
-
-    if (pPubAttrObjectClass && pPubAttrObjectClass->type != CKO_PUBLIC_KEY) return CKR_ATTRIBUTE_VALUE_INVALID;
-    if (pPrivAttrObjectClass && pPrivAttrObjectClass->type != CKO_PRIVATE_KEY) return CKR_ATTRIBUTE_VALUE_INVALID;
+    if ((pPrivKeyObjectClass  = privAttr.getType<CK_OBJECT_CLASS>(CKA_CLASS)) != NULL && *pPubKeyObjectClass != CKO_PRIVATE_KEY)
+        return CKR_ATTRIBUTE_TYPE_INVALID;
+    pPrivKeyType  = privAttr.getType<CK_KEY_TYPE>(CKA_KEY_TYPE);
 
     CK_RV ret = CKR_DEVICE_ERROR;
-
     switch (pMechanism->mechanism) {
         case CKM_RSA_PKCS_KEY_PAIR_GEN:
-            if ((ret = matchUlAttr(pPubAttrKeyType, CKK_RSA)) != CKR_OK) return ret;
-            if ((ret = matchUlAttr(pPrivAttrKeyType, CKK_RSA)) != CKR_OK) return ret;
+            if (pPubKeyType && *pPubKeyType != CKK_RSA) return ret;
+            if (pPrivKeyType && *pPrivKeyType != CKK_RSA) return ret;
             ret = GenerateKeyPairRSA(
-                s, pubKeyAttrMap, privKeyAttrMap,
+                s, pubAttr.map(), privAttr.map(),
 	            pPublicKeyTemplate, ulPublicKeyAttributeCount,
 	            pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
                 phPublicKey, phPrivateKey);

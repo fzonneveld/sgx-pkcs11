@@ -133,15 +133,6 @@ bool attrcmp(CK_ATTRIBUTE_PTR a, CK_ATTRIBUTE_PTR b){
 }
 
 
-bool checkAttr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type, uint8_t *pValue, CK_ULONG ulValueLen){
-    CK_ATTRIBUTE_PTR pAttr;
-    if ((pAttr = getAttr(attrMap, type)) == NULL) return false;
-    if (ulValueLen != pAttr->ulValueLen) return false;
-    if (CRYPTO_memcmp(pAttr->pValue, pValue, ulValueLen) == 0) return true;
-    return false;
-}
-
-
 Attribute::Attribute(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes){
     do {
         this->attrMap[pAttr->type] = pAttr;
@@ -225,15 +216,19 @@ template bool Attribute::check<CK_ULONG>(CK_ATTRIBUTE_TYPE type, CK_ULONG v);
 template bool Attribute::check<CK_BBOOL>(CK_ATTRIBUTE_TYPE type, CK_BBOOL v);
 
 
-CK_ULONG *Attribute::checkIn(CK_ATTRIBUTE_TYPE type, CK_ULONG *pVal, size_t nr) {
+template<typename T>
+T *Attribute::checkIn(CK_ATTRIBUTE_TYPE type, T *pVal, size_t nr) {
     CK_ATTRIBUTE_PTR p = this->get(type);
     if (p == NULL) return NULL;
     if (sizeof(*pVal) != p->ulValueLen) return NULL;
     for (CK_ULONG i=0; i<nr; i++) {
-        if (*((CK_ULONG *)p->pValue) == pVal[i]) return (CK_ULONG *)p->pValue;
+        if (*((T *)p->pValue) == pVal[i]) return (T *)p->pValue;
     }
     return NULL;
 }
+
+template CK_ULONG *Attribute::checkIn<CK_ULONG>(CK_ATTRIBUTE_TYPE type, CK_ULONG *pVal, size_t nr);
+
 
 void  Attribute::merge(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> b){
 	this->attrMap.insert(b.begin(), b.end());

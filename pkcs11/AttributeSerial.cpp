@@ -28,29 +28,9 @@ AttributeSerial :: AttributeSerial(const uint8_t *pSerialized, size_t serialized
         this->attrMap[pAttr->type] = pAttr;
         idx++;
     }
-
-    // Insert ordered, if allocated can free with the first element...
-    // for (; serializedLen > 0;) {
-    //     serializedAttr *pSerAttr = (serializedAttr *)pSerialized;
-    //     nrAttributes +=1;
-    //     this->allocated = (CK_ATTRIBUTE_PTR) realloc(
-    //         this->allocated, nrAttributes * sizeof *this->allocated);
-    //     pAttr = this->allocated + (nrAttributes -1);
-    //     pAttr->type = pSerAttr->type;
-    //     pAttr->ulValueLen = pSerAttr->ulValueLen;
-    //     pAttr->pValue = pSerAttr->pValue;
-    //     attrLen = sizeof *pSerAttr + pSerAttr->ulValueLen;
-    //     if (pSerAttr->ulValueLen > serializedLen || attrLen > serializedLen)
-    //         throw std::runtime_error("Invalid attributes");
-    // }
-    // // Because of the realloc we need a second loop
-    // for (int i=0; i<nrAttributes; i++) {
-    //     CK_ATTRIBUTE_PTR p = this->allocated + i;
-
-    //     this->attrMap[p->type] = p;
-    // }
-
 }
+
+
 
 AttributeSerial::~AttributeSerial() {
     if (this->allocated) free(this->allocated);

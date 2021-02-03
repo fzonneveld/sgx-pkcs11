@@ -9,23 +9,6 @@
 CK_BBOOL tr = CK_TRUE;
 CK_KEY_TYPE keyType = CKK_RSA;
 
-void test_serialization(void){
-	CK_ATTRIBUTE attributes[] =  {
-		{CKA_KEY_TYPE, &keyType, sizeof keyType},
-		{CKA_DECRYPT, &tr, sizeof(tr)},
-	};
-	CK_ULONG dataLen;
-	uint8_t *pSer = attributeSerialize(attributes, sizeof attributes / sizeof *attributes, &dataLen);
-	CK_ULONG nrAttributes;
-	CU_ASSERT_FATAL(pSer != NULL);
-	CK_ATTRIBUTE *pAttr = attributeDeserialize(pSer, dataLen, &nrAttributes);
-	CU_ASSERT_FATAL(nrAttributes == sizeof attributes / sizeof *attributes);
-	for (int i=0; i<nrAttributes; i++) {
-		CK_ATTRIBUTE *a=attributes+i, *b=pAttr+i;
-		CU_ASSERT_FATAL(attrcmp(a, b) == true);
-	}
-}
-
 void test_attr2map(void){
 	CK_ATTRIBUTE attributes[] =  {
 		{CKA_KEY_TYPE, &keyType, sizeof keyType},
@@ -155,20 +138,17 @@ uint8_t data[] = {
 0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x01 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x00 ,0x01
 };
 
-void test_me(){
+void test_sample_data(){
     AttributeSerial a = AttributeSerial(data, sizeof data);
     printAttr(data, sizeof data);
-    //size_t nrAttributes;
-    //CK_ATTRIBUTE_PTR p = a.attributes(nrAttributes);
 }
 
 CU_pSuite attribute_suite(void){
     CU_pSuite pSuite = CU_add_suite("PKCS11", NULL, NULL);
-    CU_add_test(pSuite, "serialize/deserialize", test_serialization);
     CU_add_test(pSuite, "attr2map", test_attr2map);
     CU_add_test(pSuite, "attrMerge", test_attrMerge);
     CU_add_test(pSuite, "attrMergeMaps", test_attrMergeMaps);
     CU_add_test(pSuite, "Attribute", test_Attribute);
-    CU_add_test(pSuite, "Attribute", test_me);
+    CU_add_test(pSuite, "Attribute", test_sample_data);
     return pSuite;
 }

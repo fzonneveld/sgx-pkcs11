@@ -21,7 +21,7 @@ from "sgx_tsgxssl.edl" import *;
 			[user_check] size_t *privSerializedAttrLenOut
 		);
 
-		public int SGXEncryptRSA(
+		public int SGXEncrypt(
             [in, readonly, count=public_key_length]const uint8_t* public_key, size_t public_key_length,
             [in, readonly, count=plaintext_length]const uint8_t* plaintext, size_t plaintext_length,
             [out, count=ciphertext_length]uint8_t* ciphertext, size_t ciphertext_length,

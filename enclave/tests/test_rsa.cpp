@@ -4,7 +4,8 @@
 
 #include "../crypto_engine_t.h"
 
-#include "../attribute.h"
+#include "../Attribute.h"
+#include "../AttributeSerial.h"
 
 #define CK_PTR *
 #define CK_DEFINE_FUNCTION(returnType, name) returnType name
@@ -48,6 +49,8 @@ CK_ATTRIBUTE privateRSAKeyTemplate[] = {
 
 CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplate / sizeof *privateRSAKeyTemplate;;
 
+#define MAX_ATTR_SIZE 2028
+
 //int SGXgenerateKeyPair(uint8_t* RSAPublicKey, size_t publicKeyLength, size_t* publicKeyLengthOut, uint8_t* RSAPrivateKey, size_t privateKeyLength, size_t* privateKeyLengthOut, const uint8_t* pSerialAttr, size_t serialAttrLen);
 
 
@@ -57,7 +60,6 @@ CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplate / sizeof *pr
 // 		const uint8_t *pSerialAttr, size_t serialAttrLen);
 
 
-#define MAX_ATTR_SIZE 2028
 
 void test_generateRSAKeyPair(){
 	uint8_t pubkey[2048], privkey[2048];
@@ -80,30 +82,12 @@ void test_generateRSAKeyPair(){
     CU_ASSERT_FATAL(MAX_ATTR_SIZE != publicKeySerializedLenOut);
     CU_ASSERT_FATAL(MAX_ATTR_SIZE != privSerializedAttrLenOut);
     size_t nrAttributes= 0;
-    CK_ATTRIBUTE_PTR pPublicAttr = attributeDeserialize(pPublicKeySerializedAttr, publicKeySerializedLen, &nrAttributes);
-    std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pubMap = attr2map(pPublicAttr, nrAttributes);
+    AttributeSerial pubAttr = AttributeSerial(pPublicKeySerializedAttr, publicKeySerializedLen);
+    CK_ATTRIBUTE_PTR pPublicAttr = pubAttr.attributes(nrAttributes);
     CU_ASSERT_FATAL(pPublicAttr != NULL);
 	ret = SGXgenerateKeyPair(pubkey, 10, &pubkeyLength, pPublicKeySerializedAttr, publicKeySerializedLen, &publicKeySerializedLenOut, privkey, 10, &privkeyLength, pPrivSerializedAttr, privSerializedAttrLen, &privSerializedAttrLenOut);
 	CU_ASSERT(ret < 0)
 }
-
-
-int SGXEncryptRSA(
-    const uint8_t* public_key, size_t public_key_length,
-	const uint8_t* plaintext, size_t plaintext_length,
-	uint8_t* ciphertext, size_t ciphertext_length,
-	size_t* cipherTextLength);
-
-int SGXDecryptRSA(
-        const uint8_t *private_key_ciphered,
-        size_t private_key_ciphered_length,
-        const uint8_t *attributes,
-        size_t attributes_length,
-        const uint8_t* ciphertext,
-        size_t ciphertext_length,
-        uint8_t* plaintext,
-        size_t plaintext_length,
-        size_t *plainTextLength);
 
 
 // void printAttr(uint8_t *pAttr, size_t attrLen){
@@ -122,47 +106,6 @@ int SGXDecryptRSA(
 // }
 
 
-
-
-void test_SGXcryptRSA(){
-	uint8_t pubkey[2048], privkey[2048];
-	uint8_t plaintext[16] = {0x11, 0x12};
-	uint8_t exp_plaintext[16] = {0x11, 0x12};
-	uint8_t ciphertext[256] = {0};
-	size_t cipherTextLength;
-	size_t plainTextLength;
-	size_t pubkeyLength, privkeyLength;
-    uint8_t *pPublicKeySerializedAttr=NULL;
-    size_t publicSerializedAttrLen=0;
-    size_t publicKeySerializedLenOut = MAX_ATTR_SIZE;
-    uint8_t *pPrivSerializedAttr=NULL;
-    size_t privSerializedAttrLen=0;
-    size_t privSerializedAttrLenOut = MAX_ATTR_SIZE;
-
-    pPublicKeySerializedAttr = attributeSerialize(privateRSAKeyTemplate, publicRSAKeyTemplateLength, &publicSerializedAttrLen);
-    pPublicKeySerializedAttr  = (uint8_t *) realloc(pPublicKeySerializedAttr, MAX_ATTR_SIZE);
-    pPrivSerializedAttr = attributeSerialize(privateRSAKeyTemplate, privateRSAKeyTemplateLength, &privSerializedAttrLen);
-    pPrivSerializedAttr  = (uint8_t *) realloc(pPrivSerializedAttr, MAX_ATTR_SIZE);
-
-	CU_ASSERT_FATAL(pPublicKeySerializedAttr != NULL);
-	CU_ASSERT_FATAL(pPrivSerializedAttr != NULL);
-    // printAttr(pPublicKeySerializedAttr, publicSerializedAttrLen);
-    CU_ASSERT_FATAL(0 == SGXgenerateKeyPair(pubkey, sizeof pubkey,
-        &pubkeyLength, pPublicKeySerializedAttr, publicSerializedAttrLen, &publicKeySerializedLenOut, privkey,
-        sizeof privkey, &privkeyLength, pPrivSerializedAttr, privSerializedAttrLen, &privSerializedAttrLenOut));
-    // printAttr(pPublicKeySerializedAttr, publicSerializedAttrLen);
-	CU_ASSERT_FATAL(0 == SGXEncryptRSA(
-		pubkey, pubkeyLength,
-		plaintext, sizeof plaintext,
-		ciphertext, sizeof ciphertext, &cipherTextLength));
-	CU_ASSERT_FATAL(0 == SGXDecryptRSA(
-		privkey, privkeyLength,
-        pPrivSerializedAttr, privSerializedAttrLen,
-		ciphertext, cipherTextLength,
-		plaintext, sizeof plaintext, &plainTextLength));
-	CU_ASSERT(plainTextLength == sizeof plaintext);
-	CU_ASSERT(0 == memcmp(plaintext, exp_plaintext, sizeof plaintext));
-}
 
 
 extern CK_BBOOL rootKeySet;
@@ -209,9 +152,8 @@ void test_SGXSetRootKeyShare(void)
 
 
 CU_pSuite rsa_suite(void){
-    CU_pSuite pSuite = CU_add_suite("Enclave", NULL, NULL);
+    CU_pSuite pSuite = CU_add_suite("RSA", NULL, NULL);
     CU_add_test(pSuite, "generateRSAKeyPair", test_generateRSAKeyPair);
-    CU_add_test(pSuite, "SGXDecryptRSA", test_SGXcryptRSA);
     CU_add_test(pSuite, "SGXSetRootKeyShare", test_SGXSetRootKeyShare);
     return pSuite;
 }

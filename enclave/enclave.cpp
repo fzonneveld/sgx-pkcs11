@@ -66,7 +66,7 @@ int SGXgenerateKeyPair(
 }
 
 
-int SGXEncryptRSA(
+int SGXEncrypt(
         const uint8_t* public_key, size_t public_key_length,
         const uint8_t* plaintext, size_t plaintext_length,
         uint8_t* ciphertext, size_t ciphertext_length,

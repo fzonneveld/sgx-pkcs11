@@ -30,10 +30,6 @@ std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR>  attrMergeMaps(std::map<CK_ATTRIBU
 
 CK_RV matchUlAttr(CK_ATTRIBUTE *p, CK_ULONG ul);
 
-bool checkAttr(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> attrMap, CK_ATTRIBUTE_TYPE type, uint8_t *pValue, CK_ULONG ulValueLen);
-
-
-
 
 class Attribute
 {
@@ -55,7 +51,8 @@ public:
     bool check(CK_ATTRIBUTE_TYPE type, T v);
     // bool check(CK_ATTRIBUTE_TYPE type, CK_ULONG);
     // bool check(CK_ATTRIBUTE_TYPE type, CK_BBOOL value);
-    CK_ULONG *checkIn(CK_ATTRIBUTE_TYPE type, CK_ULONG *pVal, size_t nr);
+    template<typename T>
+    T *checkIn(CK_ATTRIBUTE_TYPE type, T *pVal, size_t nr);
 
     void merge(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> map);
     void merge(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes);

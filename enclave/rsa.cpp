@@ -173,17 +173,17 @@ int EncryptRSA(
     int ret = -1;
     RSA *rsa = NULL;
     EVP_PKEY *pKey = NULL;
-	if (NULL == (pKey = EVP_PKEY_new())) goto SGXEncryptRSA_err;
-	if (NULL == (pKey = d2i_PublicKey(EVP_PKEY_RSA, &pKey, &public_key, public_key_length))) goto SGXEncryptRSA_err;
-	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto SGXEncryptRSA_err;
+	if (NULL == (pKey = EVP_PKEY_new())) goto SGXEncrypt_err;
+	if (NULL == (pKey = d2i_PublicKey(EVP_PKEY_RSA, &pKey, &public_key, public_key_length))) goto SGXEncrypt_err;
+	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto SGXEncrypt_err;
 
 	if (( len = RSA_public_encrypt(
             plaintext_length, (uint8_t*)plaintext, (unsigned char*)ciphertext, rsa, padding)) == -1)
-        goto SGXEncryptRSA_err;
+        goto SGXEncrypt_err;
 
 	*cipherTextLength = (size_t)len;
     ret = 0;
-SGXEncryptRSA_err:
+SGXEncrypt_err:
     if (rsa) RSA_free(rsa);
 	if (pKey) EVP_PKEY_free(pKey);
     return ret;

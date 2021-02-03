@@ -4,6 +4,8 @@
 
 extern CU_pSuite rsa_suite();
 extern CU_pSuite ssss_suite();
+extern CU_pSuite enclave_suite();
+
 
 typedef CU_pSuite (*t_suite_create)(void);
 

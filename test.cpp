@@ -102,7 +102,7 @@ map<int, string> c_mechanisms = {
     {CKM_ECDSA, "CKM_ECDSA"},
 };
 
-#define USAGE {cout << "Usage: [-i SOPIN] [-v] [-c] " << argv[0] << " <pkcs11 lib>" << endl;}
+#define USAGE {cout << "Usage: [-i SOPIN] [-v] [-c] " << argv[0] << " <pkcs11 lib> [nr_times]" << endl;}
 
 int main(int argc, char *argv[]) {
     void *d;
