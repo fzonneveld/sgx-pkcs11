@@ -56,7 +56,8 @@ CK_ATTRIBUTE defaultPrivateKeyAttr[] = {
 	{CKA_SENSITIVE, &tr, sizeof(tr)},
 	{CKA_ALWAYS_SENSITIVE, &tr, sizeof(tr)}
 };
-std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> defaultPrivateKKeyAttrMap = ATTR2MAP(defaultPrivateKeyAttr);
+
+auto defaultPrivateKKeyAttrMap = Attribute(defaultPrivateKeyAttr, sizeof defaultPrivateKeyAttr / sizeof *defaultPrivateKeyAttr).map();
 
 static CK_OBJECT_CLASS pubObjectClass = CKO_PUBLIC_KEY;
 
@@ -64,7 +65,8 @@ CK_ATTRIBUTE defaultPublicKeyAttr[] = {
     {CKA_CLASS, &pubObjectClass, sizeof pubObjectClass},
     {CKA_KEY_TYPE, &keyType, sizeof keyType},
 };
-std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> defaultPublicKeyAttrMap = ATTR2MAP(defaultPublicKeyAttr);
+
+auto defaultPublicKeyAttrMap = Attribute(defaultPublicKeyAttr, sizeof defaultPublicKeyAttr / sizeof *defaultPublicKeyAttr).map();
 
 
 int generateRSAKeyPair(

@@ -73,10 +73,14 @@ void test_generateRSAKeyPair(){
     int ret;
 
     rootKeySet = CK_TRUE;
-    pPrivSerializedAttr = attributeSerialize(privateRSAKeyTemplate, privateRSAKeyTemplateLength, &privSerializedAttrLen);
+    Attribute priv = Attribute(privateRSAKeyTemplate, privateRSAKeyTemplateLength);
+    pPrivSerializedAttr = priv.serialize(&privSerializedAttrLen);
     pPrivSerializedAttr  = (uint8_t *) realloc(pPrivSerializedAttr, MAX_ATTR_SIZE);
-    pPublicKeySerializedAttr = attributeSerialize(publicRSAKeyTemplate, publicRSAKeyTemplateLength, &publicKeySerializedLen);
+
+    Attribute pub = Attribute(publicRSAKeyTemplate, publicRSAKeyTemplateLength);
+    pPublicKeySerializedAttr = pub.serialize(&publicKeySerializedLen);
     pPublicKeySerializedAttr  = (uint8_t *) realloc(pPublicKeySerializedAttr, MAX_ATTR_SIZE);
+
 	ret = SGXgenerateKeyPair(pubkey, sizeof pubkey, &pubkeyLength, pPublicKeySerializedAttr, publicKeySerializedLen, &publicKeySerializedLenOut, privkey, sizeof privkey, &privkeyLength, pPrivSerializedAttr, privSerializedAttrLen, &privSerializedAttrLenOut);
 	CU_ASSERT_FATAL(0 == ret);
     CU_ASSERT_FATAL(MAX_ATTR_SIZE != publicKeySerializedLenOut);
@@ -88,24 +92,6 @@ void test_generateRSAKeyPair(){
 	ret = SGXgenerateKeyPair(pubkey, 10, &pubkeyLength, pPublicKeySerializedAttr, publicKeySerializedLen, &publicKeySerializedLenOut, privkey, 10, &privkeyLength, pPrivSerializedAttr, privSerializedAttrLen, &privSerializedAttrLenOut);
 	CU_ASSERT(ret < 0)
 }
-
-
-// void printAttr(uint8_t *pAttr, size_t attrLen){
-//     size_t nrAttributes;
-//
-//     CK_ATTRIBUTE_PTR attr = attributeDeserialize(pAttr, attrLen, &nrAttributes);
-//     for (size_t i=0; i<nrAttributes; i++) {
-//         CK_ATTRIBUTE_PTR a = attr + i;
-//         printf("Attribute[%04lu] type 0x%08lx, value[%lu] ", i, a->type, a->ulValueLen);
-//         for (size_t j=0; j<a->ulValueLen; j++) {
-//             printf("%02X ", ((uint8_t *)a->pValue)[j]);
-//         }
-//         printf("\n");
-//     }
-//     free(attr);
-// }
-
-
 
 
 extern CK_BBOOL rootKeySet;

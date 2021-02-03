@@ -36,30 +36,6 @@ CK_FUNCTION_LIST functionList = {
 #define EC_MAX_KEY_SIZE 512
 
 
-void printAttr(CK_ATTRIBUTE_PTR pAttr, size_t nrAttributes) {
-    for (size_t i=0; i<nrAttributes; i++) {
-        CK_ATTRIBUTE_PTR a = pAttr + i;
-        for (size_t j=0; j<a->ulValueLen; j++) {
-            printf("%02X ", ((uint8_t *)a->pValue)[j]);
-        }
-        printf("\n");
-    }
-}
-
-
-void printAttrSerialized(uint8_t *pAttrserialized, size_t attrSerializedLen){
-    CK_ULONG nrAttributes;
-
-    AttributeSerial attr = AttributeSerial(pAttrserialized, attrSerializedLen);
-    CK_ATTRIBUTE_PTR pAttr = attr.attributes(nrAttributes);
-    if (pAttr == NULL) return;
-    printAttr(pAttr, nrAttributes);
-    free(pAttr);
-}
-
-
-
-
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
     *ppFunctionList = &functionList;

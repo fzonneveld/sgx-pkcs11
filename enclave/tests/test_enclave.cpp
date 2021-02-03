@@ -20,11 +20,7 @@
 #include "../../cryptoki/pkcs11.h"
 
 static CK_BBOOL tr = CK_TRUE;
-static CK_BBOOL fa = CK_TRUE;
 static CK_KEY_TYPE keyType = CKK_RSA;
-static CK_BYTE subject[] = { "Ciphered private RSA key" };
-static CK_BYTE id[] = { 123 };
-static CK_BYTE dat[] = "";
 static CK_ULONG modulus_bits = 2048;
 
 
@@ -65,9 +61,12 @@ void test_SGXcrypt(){
     size_t privSerializedAttrLen=0;
     size_t privSerializedAttrLenOut = MAX_ATTR_SIZE;
 
-    pPublicKeySerializedAttr = attributeSerialize(privateRSAKeyTemplate, publicRSAKeyTemplateLength, &publicSerializedAttrLen);
+    Attribute pubAttr = Attribute(publicRSAKeyTemplate,publicRSAKeyTemplateLength);
+    pPublicKeySerializedAttr = pubAttr.serialize(&publicSerializedAttrLen);
     pPublicKeySerializedAttr  = (uint8_t *) realloc(pPublicKeySerializedAttr, MAX_ATTR_SIZE);
-    pPrivSerializedAttr = attributeSerialize(privateRSAKeyTemplate, privateRSAKeyTemplateLength, &privSerializedAttrLen);
+
+    Attribute privAttr = Attribute(privateRSAKeyTemplate, privateRSAKeyTemplateLength);
+    pPrivSerializedAttr = privAttr.serialize(&privSerializedAttrLen);
     pPrivSerializedAttr  = (uint8_t *) realloc(pPrivSerializedAttr, MAX_ATTR_SIZE);
 
 	CU_ASSERT_FATAL(pPublicKeySerializedAttr != NULL);

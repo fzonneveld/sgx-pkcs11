@@ -23,17 +23,6 @@
 #include "arm.h"
 
 
-CK_ATTRIBUTE *getType(std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> pAttrMap, CK_KEY_TYPE type, size_t type_len) {
-	CK_ATTRIBUTE *ret;
-	if ((ret = getAttr(pAttrMap, type)) == NULL) {
-		return NULL;
-	}
-	if (ret->ulValueLen != type_len) {
-		return NULL;
-	}
-	return ret;
-}
-
 int SGXgenerateKeyPair(
         uint8_t *PublicKey, size_t PublicKeyLength, size_t *PublicKeyLengthOut,
 		uint8_t *pPublicSerializedAttr, size_t publicSerializedAttrLen, size_t *publicSerializedAttrLenOut,
