@@ -1,5 +1,5 @@
 OBJECTS = enclave.o Attribute.o AttributeSerial.o ssss.o rsa.o ec.o arm.o
-TEST_OBJECTS = tst.o test_enclave.o stubs.o test_rsa.o test_ssss.o
+TEST_OBJECTS = tst.o test_enclave.o stubs.o test_rsa.o test_ssss.o test_ec.o
 LDLIBS = -lssl -lcrypto -lstdc++ -lcunit -lpthread
 
 SGX_SDK ?= /opt/intel/sgxsdk

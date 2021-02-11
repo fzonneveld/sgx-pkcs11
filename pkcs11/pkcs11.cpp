@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 
 #include "pkcs11-interface.h"
 
@@ -35,6 +37,31 @@ CK_FUNCTION_LIST functionList = {
 #define EC_MIN_KEY_SIZE 112
 #define EC_MAX_KEY_SIZE 512
 
+void printAttr(CK_ATTRIBUTE_PTR attr, CK_ULONG nrAttributes ){
+
+    for (size_t i=0; i<nrAttributes; i++) {
+        CK_ATTRIBUTE_PTR a = attr + i;
+        printf("Attribute[%04lu] type 0x%08lx, value[%lu] ", i, a->type, a->ulValueLen);
+        for (size_t j=0; j<a->ulValueLen; j++) {
+            printf("%02X ", ((uint8_t *)a->pValue)[j]);
+        }
+        printf("\n");
+    }
+}
+
+
+void printhex(const char *s, const uint8_t *buf, unsigned long length){
+    int i;
+    printf("%s [%lu]", s, length);
+    for (i=0; i< (int)length; i++) {
+        if ((i % 16) == 0) printf("\n");
+        printf("%02X ", buf[i]);
+    }
+    printf("\n");
+}
+
+
+
 
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
@@ -58,11 +85,10 @@ typedef struct pkcs11_session {
         CK_OBJECT_HANDLE_PTR  hObject;
         CK_ULONG ulObjectCount;
     } FindObject;
-    pkcs11_object_t Encrypt;
-    pkcs11_object_t Decrypt;
     CK_OBJECT_HANDLE handle;
     PKCS_OPERATION operation;
-    CK_MECHANISM_TYPE operationMechanism;
+    pkcs11_object_t operationObject;
+    CK_MECHANISM_TYPE operationMechanismType;
 } pkcs11_session_t;
 
 std::map<CK_SESSION_HANDLE, pkcs11_session_t> sessions;
@@ -589,7 +615,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 		return CKR_MECHANISM_INVALID;
 	}
 
-    pkcs11_object_t *o = &s->Encrypt;
+    pkcs11_object_t *o = &s->operationObject;
     if (o->pValue) free(o->pValue);
     if (o->pAttributes) free(o->pAttributes);
     memset(o, 0, sizeof *o);
@@ -598,7 +624,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
         return CKR_DEVICE_ERROR;
     }
 	s->operation = PKCS11_CK_OPERATION_ENCRYPT;
-    s->operationMechanism = CKM_RSA_PKCS;
+    s->operationMechanismType = CKM_RSA_PKCS;
 	return CKR_OK;
 }
 
@@ -606,6 +632,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	CK_BYTE_PTR pData, CK_ULONG ulDataLen,
 	CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen) {
+
+    int len;
+	CK_RV ret = CKR_DEVICE_ERROR;
+    RSA *rsa = NULL;
+    EVP_PKEY *pKey = NULL;
+	int padding = RSA_PKCS1_PADDING;
 
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
@@ -624,25 +656,36 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	if (NULL == pulEncryptedDataLen)
 		return CKR_ARGUMENTS_BAD;
 
-	try {
-        CK_ULONG len;
-        CK_BYTE_PTR res = crypto->RSAEncrypt(
-            s->Encrypt.pValue, s->Encrypt.valueLength, (const uint8_t *)pData, (size_t)ulDataLen, (size_t*)&len);
-        if (len > *pulEncryptedDataLen) {
-            free(res);
-            return CKR_ARGUMENTS_BAD;
-        }
-        memcpy(pEncryptedData, res, len);
-        *pulEncryptedDataLen = len;
-        free(res);
-	}
-	catch (std::runtime_error) {
-		return CKR_DEVICE_ERROR;
-	}
+    Attribute attr = Attribute(s->operationObject.pAttributes, s->operationObject.ulAttributeCount);
 
-	s->operation = PKCS11_CK_OPERATION_NONE;
+	if (*attr.getType<CK_OBJECT_CLASS>(CKA_CLASS) != CKO_PUBLIC_KEY) return CKR_KEY_HANDLE_INVALID;
 
-	return CKR_OK;
+	CK_KEY_TYPE *pKeyType;
+    pKeyType = attr.getType<CK_KEY_TYPE>(CKA_KEY_TYPE);
+	switch (*pKeyType) {
+		case CKK_RSA:
+			if (NULL == (pKey = EVP_PKEY_new())) goto C_Encrypt_err;
+			if (NULL == (pKey = d2i_PublicKey(EVP_PKEY_RSA, &pKey, (const uint8_t **)&s->operationObject.pValue, s->operationObject.valueLength))) goto C_Encrypt_err;
+			if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto C_Encrypt_err;
+
+			if (*pulEncryptedDataLen < (CK_ULONG) RSA_size(rsa)) goto C_Encrypt_err;
+
+			if (( len = RSA_public_encrypt(
+					ulDataLen, (uint8_t*)pData, (uint8_t*)pEncryptedData, rsa, padding)) < 0)
+				goto C_Encrypt_err;
+
+			*pulEncryptedDataLen = (CK_ULONG)len;
+			ret = CKR_OK;
+			s->operation = PKCS11_CK_OPERATION_NONE;
+			break;
+		default:
+			return CKR_KEY_HANDLE_INVALID;
+	}
+C_Encrypt_err:
+    if (rsa) RSA_free(rsa);
+	if (pKey) EVP_PKEY_free(pKey);
+
+    return ret;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_EncryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart, CK_ULONG_PTR pulEncryptedPartLen)
@@ -668,7 +711,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 	if (NULL == pMechanism)
 		return CKR_ARGUMENTS_BAD;
 
-    pkcs11_object_t *o = &s->Decrypt;
+    pkcs11_object_t *o = &s->operationObject;
     if (db->getObject(hKey, &o->pValue, o->valueLength, &o->pAttributes, o->ulAttributeCount)) {
         return CKR_DEVICE_ERROR;
     }
@@ -717,9 +760,9 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
         CK_ULONG resLength;
         uint8_t *serialized_attr;
         size_t attrLen;
-        Attribute attr = Attribute(s->Decrypt.pAttributes, s->Decrypt.ulAttributeCount);
+        Attribute attr = Attribute(s->operationObject.pAttributes, s->operationObject.ulAttributeCount);
         serialized_attr = attr.serialize(&attrLen);
-		CK_BYTE_PTR res = crypto->RSADecrypt(s->Decrypt.pValue, s->Decrypt.valueLength, serialized_attr, attrLen, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
+		CK_BYTE_PTR res = crypto->RSADecrypt(s->operationObject.pValue, s->operationObject.valueLength, serialized_attr, attrLen, (const CK_BYTE*)pEncryptedData, (CK_ULONG) ulEncryptedDataLen, &resLength);
         if (res == NULL) {
             return CKR_DEVICE_ERROR;
         }
@@ -783,13 +826,93 @@ CK_DEFINE_FUNCTION(CK_RV, C_DigestFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR
 
 CK_DEFINE_FUNCTION(CK_RV, C_SignInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_NONE != s->operation)
+		return CKR_OPERATION_ACTIVE;
+
+	if (NULL == pMechanism)
+		return CKR_ARGUMENTS_BAD;
+
+    pkcs11_object_t *o = &s->operationObject;
+    if (db->getObject(hKey, &o->pValue, o->valueLength, &o->pAttributes, o->ulAttributeCount)) {
+        return CKR_DEVICE_ERROR;
+    }
+
+    Attribute a = Attribute(o->pAttributes, o->ulAttributeCount);
+    CK_OBJECT_CLASS_PTR pObjectClass = a.getType<CK_OBJECT_CLASS>(CKA_CLASS);
+    printAttr(o->pAttributes, o->ulAttributeCount);
+    CK_KEY_TYPE *pKeyType = a.getType<CK_KEY_TYPE>(CKA_KEY_TYPE);
+
+    if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
+        return CKR_MECHANISM_PARAM_INVALID;
+    if (pObjectClass == NULL || *pObjectClass != CKO_PRIVATE_KEY) return CKR_OBJECT_HANDLE_INVALID;
+    if (pKeyType == NULL) return CKR_OBJECT_HANDLE_INVALID;
+	switch (pMechanism->mechanism)
+	{
+        case CKM_RSA_PKCS:
+            if (*pKeyType != CKK_RSA) return CKR_OBJECT_HANDLE_INVALID;
+            break;
+        case CKM_ECDSA:
+        case CKM_ECDSA_SHA1:
+            if (*pKeyType != CKK_EC) return CKR_OBJECT_HANDLE_INVALID;
+            break;
+        default:
+            return CKR_MECHANISM_INVALID;
+	}
+	s->operation = PKCS11_CK_OPERATION_SIGN;
+    s->operationMechanismType = pMechanism->mechanism;
+    // Implementing RSA_PSS requires paramaters if non default are required
+	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_SIGN != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+
+	if (NULL == pData)
+		return CKR_ARGUMENTS_BAD;
+
+	if (0 >= ulDataLen)
+		return CKR_ARGUMENTS_BAD;
+
+	if (NULL == pulSignatureLen)
+		return CKR_ARGUMENTS_BAD;
+
+	try {
+        CK_ULONG resLength;
+        uint8_t *serialized_attr;
+        size_t attrLen;
+        Attribute attr = Attribute(s->operationObject.pAttributes, s->operationObject.ulAttributeCount);
+        serialized_attr = attr.serialize(&attrLen);
+		CK_BYTE_PTR res = crypto->Sign(s->operationObject.pValue, s->operationObject.valueLength, serialized_attr, attrLen, pData, ulDataLen, &resLength, s->operationMechanismType);
+        if (res == NULL) {
+            return CKR_DEVICE_ERROR;
+        }
+        if (resLength > *pulSignatureLen) {
+            free(res);
+            return CKR_BUFFER_TOO_SMALL;
+        }
+        memcpy(pSignature, res, resLength);
+        *pulSignatureLen = resLength;
+        free(res);
+	}
+	catch (std::runtime_error) {
+		return CKR_DEVICE_ERROR;
+	}
+
+	s->operation = PKCS11_CK_OPERATION_NONE;
+	return CKR_OK;
 }
 
 
@@ -819,13 +942,122 @@ CK_DEFINE_FUNCTION(CK_RV, C_SignRecover)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR
 
 CK_DEFINE_FUNCTION(CK_RV, C_VerifyInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_NONE != s->operation)
+		return CKR_OPERATION_ACTIVE;
+
+	if (NULL == pMechanism)
+		return CKR_ARGUMENTS_BAD;
+
+	switch (pMechanism->mechanism)
+	{
+		case CKM_ECDSA:
+			if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
+				return CKR_MECHANISM_PARAM_INVALID;
+			break;
+		case CKM_RSA_PKCS:
+		case CKM_SHA1_RSA_PKCS:
+		case CKM_SHA256_RSA_PKCS:
+		case CKM_SHA384_RSA_PKCS:
+		case CKM_SHA512_RSA_PKCS:
+			break;
+		default:
+			return CKR_MECHANISM_INVALID;
+	}
+    pkcs11_object_t *o = &s->operationObject;
+    if (o->pValue) free(o->pValue);
+    if (o->pAttributes) free(o->pAttributes);
+    memset(o, 0, sizeof *o);
+    int rc;
+    if (0 > (rc =db->getObject(hKey, &o->pValue, o->valueLength, &o->pAttributes, o->ulAttributeCount))) {
+        return CKR_DEVICE_ERROR;
+    }
+	s->operation = PKCS11_CK_OPERATION_VERIFY;
+    s->operationMechanismType = pMechanism->mechanism;
+	return CKR_OK;
 }
 
 
+typedef const EVP_MD* (*md_func_t)(void);
+
+struct mechanismType {
+	int padding;
+    md_func_t mdf;
+} mechanismType_t;
+
+static std::map<CK_MECHANISM_TYPE, mechanismType> allowedSignMechanisms = {
+	{ CKM_RSA_PKCS, { RSA_PKCS1_PADDING, NULL }},
+	{ CKM_SHA1_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha1 }},
+	{ CKM_SHA256_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha256 }},
+	{ CKM_SHA384_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha384 }},
+	{ CKM_SHA512_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha256 }},
+};
+
 CK_DEFINE_FUNCTION(CK_RV, C_Verify)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	CK_RV ret = CKR_DEVICE_ERROR;
+    EVP_PKEY *pKey = NULL;
+	EVP_PKEY_CTX *pkey_ctx = NULL;
+	int type;
+	const uint8_t *endptr;
+
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_VERIFY != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+
+	if (NULL == pData)
+		return CKR_ARGUMENTS_BAD;
+
+	if (0 >= ulSignatureLen)
+		return CKR_ARGUMENTS_BAD;
+
+	if (NULL == pSignature)
+		return CKR_ARGUMENTS_BAD;
+
+    Attribute attr = Attribute(s->operationObject.pAttributes, s->operationObject.ulAttributeCount);
+
+	if (*attr.getType<CK_OBJECT_CLASS>(CKA_CLASS) != CKO_PUBLIC_KEY) return CKR_KEY_HANDLE_INVALID;
+
+	CK_KEY_TYPE *pKeyType;
+	s->operation = PKCS11_CK_OPERATION_NONE;
+    pKeyType = attr.getType<CK_KEY_TYPE>(CKA_KEY_TYPE);
+	endptr = s->operationObject.pValue;
+	if (NULL == (pKey = d2i_PUBKEY(&pKey, &endptr,  s->operationObject.valueLength))) goto C_Verify_err;
+    type = EVP_PKEY_id(pKey);
+	if (NULL == (pkey_ctx = EVP_PKEY_CTX_new(pKey, NULL))) goto C_Verify_err;
+	if (EVP_PKEY_verify_init(pkey_ctx) != 1) goto C_Verify_err;
+	switch (*pKeyType) {
+		case CKK_RSA: {
+				ret = CKR_MECHANISM_INVALID;
+				auto it = allowedSignMechanisms.find(s->operationMechanismType);
+				if (it == allowedSignMechanisms.end()) goto C_Verify_err;
+				ret = CKR_DEVICE_ERROR;
+				if (0 >= EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, it->second.padding)) goto C_Verify_err;
+				if (0 >= EVP_PKEY_CTX_set_signature_md(pkey_ctx, it->second.mdf)) goto C_Verify_err;
+				if (type != EVP_PKEY_RSA) goto C_Verify_err;
+			}
+			break;
+		case CKK_ECDSA:
+			if (type != EVP_PKEY_EC) goto C_Verify_err;
+			break;
+		default:
+			ret = CKR_KEY_HANDLE_INVALID;
+			goto C_Verify_err;
+	}
+	if (1 != EVP_PKEY_verify(pkey_ctx, pSignature, ulSignatureLen, pData, ulDataLen)) goto C_Verify_err;
+	ret = CKR_OK;
+C_Verify_err:
+	if (pKey) EVP_PKEY_free(pKey);
+	if (pkey_ctx) EVP_PKEY_CTX_free(pkey_ctx);
+    return ret;
 }
 
 
@@ -892,7 +1124,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 //     return 0;
 // }
 
-CK_RV GenerateKeyPairRSA(
+CK_RV GenerateKeyPair(
     pkcs11_session_t *session,
     // std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> publicKeyAttrMap,
     Attribute pubAttr,
@@ -901,9 +1133,6 @@ CK_RV GenerateKeyPairRSA(
 	CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
 	CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
 	CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey) {
-
-    CK_ULONG *pModulusBits;
-    if ((pModulusBits = pubAttr.getType<CK_ULONG>(CKA_MODULUS_BITS)) == NULL) return CKR_TEMPLATE_INCONSISTENT;
 
 	uint8_t* pPublicKey = NULL;
 	size_t publicKeyLength;
@@ -916,28 +1145,7 @@ CK_RV GenerateKeyPairRSA(
     CK_BBOOL *pToken;
 
     if ((pToken = pubAttr.getType<CK_BBOOL>(CKA_TOKEN)) == NULL) return CKR_ATTRIBUTE_VALUE_INVALID;
-    if (*pToken) {
-		CK_KEY_TYPE keyType = CKK_RSA;
-        // Store in memory, return a pointer to allocated attributes...
-		// Public key
-        CK_ULONG modulusBits = 2048;
-        CK_BBOOL trueValue = CK_TRUE;
-        CK_BBOOL falseValue = CK_FALSE;
-		CK_ATTRIBUTE publicKeyAttribs[] = {
-			{ CKA_TOKEN, pToken, sizeof(*pToken) },
-            { CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)},
-            { CKA_PRIVATE, &falseValue, sizeof(falseValue)},
-			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
-		};
-        pubAttr.merge(publicKeyAttribs, sizeof publicKeyAttribs / sizeof *publicKeyAttribs);
-		// Private key
-		CK_ATTRIBUTE privateKeyAttribs[] = {
-			{ CKA_TOKEN, pToken, sizeof(*pToken)},
-            { CKA_PRIVATE, &trueValue, sizeof(trueValue)},
-			{ CKA_KEY_TYPE, &keyType, sizeof keyType },
-		};
-        privAttr.merge(privateKeyAttribs, sizeof privateKeyAttribs / sizeof *privateKeyAttribs);
-    } else {
+    if (pToken == NULL || *pToken == CK_FALSE) {
 		// For now session objects not supported
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
@@ -1016,17 +1224,31 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
     CK_RV ret = CKR_DEVICE_ERROR;
     switch (pMechanism->mechanism) {
         case CKM_RSA_PKCS_KEY_PAIR_GEN:
-            if (pPubKeyType && *pPubKeyType != CKK_RSA) return ret;
-            if (pPrivKeyType && *pPrivKeyType != CKK_RSA) return ret;
-            ret = GenerateKeyPairRSA(
-                s, pubAttr.map(), privAttr.map(),
-	            pPublicKeyTemplate, ulPublicKeyAttributeCount,
-	            pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
-                phPublicKey, phPrivateKey);
+            {
+                CK_KEY_TYPE keyType = CKK_RSA;
+                CK_ULONG *pModulusBits;
+
+                ret = CKR_ATTRIBUTE_TYPE_INVALID;
+                if (pPubKeyType && *pPubKeyType != CKK_RSA) return ret;
+                if (pPrivKeyType && *pPrivKeyType != CKK_RSA) return ret;
+
+                if ((pModulusBits = pubAttr.getType<CK_ULONG>(CKA_MODULUS_BITS)) == NULL) return ret;
+                CK_ATTRIBUTE keyAttribs[] = {
+                    {CKA_KEY_TYPE, &keyType, sizeof keyType },
+                };
+                pubAttr.merge(keyAttribs, sizeof keyAttribs / sizeof *keyAttribs);
+                // Private key
+                privAttr.merge(keyAttribs, sizeof keyAttribs / sizeof *keyAttribs);
+            }
 			break;
         default:
             ret = CKR_MECHANISM_INVALID;
     }
+    ret = GenerateKeyPair(
+        s, pubAttr.map(), privAttr.map(),
+        pPublicKeyTemplate, ulPublicKeyAttributeCount,
+        pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+        phPublicKey, phPrivateKey);
     return ret;
 }
 

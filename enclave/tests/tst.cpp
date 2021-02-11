@@ -3,6 +3,7 @@
 #include <CUnit/Basic.h>
 
 extern CU_pSuite rsa_suite();
+extern CU_pSuite ec_suite();
 extern CU_pSuite ssss_suite();
 extern CU_pSuite enclave_suite();
 
@@ -11,7 +12,9 @@ typedef CU_pSuite (*t_suite_create)(void);
 
 t_suite_create funcs[] = {
     rsa_suite,
+    ec_suite,
     ssss_suite,
+    enclave_suite,
 };
 
 int main(int argc, char *argv[]) {

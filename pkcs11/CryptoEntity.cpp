@@ -30,6 +30,7 @@ CryptoEntity::CryptoEntity() {
 	// Step 2: call sgx_create_enclave to initialize an enclave instance
 	ret = sgx_create_enclave(this->kEnclaveFile, SGX_DEBUG_FLAG, &launch_token, &updated, &this->enclave_id_, NULL);
 	if (ret != SGX_SUCCESS) {
+        printf("%s:%i ret=0x%x\n", __FILE__, __LINE__, ret);
 		throw std::runtime_error("Failed to create enclave.");
 	}
 
@@ -46,6 +47,7 @@ CryptoEntity::CryptoEntity() {
 	}
 	fclose(fp);
 }
+
 
 #define MAX_KEY_BUF 8192
 #define MAX_ATTR_BUF 8192
@@ -90,18 +92,30 @@ void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength,
     *privSerializedAttr = (uint8_t *)realloc(*privSerializedAttr, *pPrivAttrLen);
 }
 
-unsigned char* CryptoEntity::RSAEncrypt(const uint8_t *key, size_t keyLength, const unsigned char* plainData, size_t plainDataLength, size_t* cipherLength) {
-	sgx_status_t ret;
-	unsigned char* cipherData = (unsigned char*)malloc(CIPHER_BUFFER_LENGTH * sizeof(unsigned char));
+uint8_t *CryptoEntity::Sign(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t *pData, size_t dataLen, size_t *pSignatureLen, CK_MECHANISM_TYPE mechanism){
+	sgx_status_t stat;
     int retval;
+    uint8_t *sig;
+	size_t siglen = 2048;
 
-	ret = SGXEncrypt(this->enclave_id_, &retval, key, keyLength,
-		plainData, plainDataLength, cipherData, CIPHER_BUFFER_LENGTH, cipherLength);
-
-	if (ret != SGX_SUCCESS || retval != 0) {
-		throw std::runtime_error("Encryption failed\n");
+    sig = (uint8_t *) malloc(siglen);
+	*pSignatureLen = siglen;
+	stat = SGXSign(
+            this->enclave_id_,
+            &retval,
+			key, keyLength,
+            pAttribute, attributeLen,
+			pData, dataLen,
+		    sig,
+			siglen,
+            pSignatureLen,
+			mechanism);
+	if (stat != SGX_SUCCESS || retval != 0) {
+		free(sig);
+        printf("%s:%i retval=0x%x\n", __FILE__, __LINE__, retval);
+		throw std::runtime_error("Sign failed\n");
     }
-	return cipherData;
+	return sig;
 }
 
 uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {

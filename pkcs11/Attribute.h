@@ -10,7 +10,7 @@ typedef struct {
     CK_BYTE pValue[0];
 } serializedAttr;
 
-
+#define ATTR(x) Attribute(x, sizeof x / sizeof *x)
 
 class Attribute
 {

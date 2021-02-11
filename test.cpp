@@ -43,35 +43,85 @@ CK_FUNCTION_LIST *funcs;
     if (verbose == 1) cout << "Called " << #func << endl; \
 }
 
-#define KEY_SIZE_BITS 4096
+#define KEY_SIZE_BITS 2048
 #define KEY_SIZE_BYTES (KEY_SIZE_BITS/8)
 
 CK_BBOOL tr = CK_TRUE;
-CK_KEY_TYPE keyType = CKK_RSA;
+CK_KEY_TYPE keyTypeRSA = CKK_RSA;
+CK_KEY_TYPE keyTypeEC = CKK_EC;
 CK_BYTE subject[] = { "Ciphered private RSA key" };
 CK_BYTE id[] = { 123 };
 CK_BYTE dat[] = "";
 CK_ULONG modulusBits = KEY_SIZE_BITS;
+uint8_t CKA_EC_PARAM_PRIME_256V1[] = { 0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07};
 
 
-CK_ATTRIBUTE publicRSAKeyTemplate[] = {
-    {CKA_KEY_TYPE, &keyType, sizeof keyType},
+CK_ATTRIBUTE publicECKeyTemplate[] = {
+    {CKA_KEY_TYPE, &keyTypeEC, sizeof keyTypeEC},
     {CKA_TOKEN, &tr, sizeof tr},
-	{CKA_ENCRYPT, &tr, sizeof(tr)},
-	{CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)}
+	{CKA_SIGN, &tr, sizeof(tr)},
+	{CKA_EC_PARAMS, CKA_EC_PARAM_PRIME_256V1, sizeof(CKA_EC_PARAM_PRIME_256V1)}
 };
-CK_ULONG publicRSAKeyTemplateLength = sizeof publicRSAKeyTemplate / sizeof *publicRSAKeyTemplate;
+CK_ULONG publicECKeyTemplateLength = sizeof publicECKeyTemplate / sizeof *publicECKeyTemplate;
 
-CK_ATTRIBUTE privateRSAKeyTemplate[] = {
-    {CKA_KEY_TYPE, &keyType, sizeof keyType},
+CK_ATTRIBUTE privateECKeyTemplate[] = {
+    {CKA_KEY_TYPE, &keyTypeEC, sizeof keyTypeEC},
 	{CKA_TOKEN, &tr, sizeof(tr)},
 	{CKA_PRIVATE, &tr, sizeof(tr)},
 	{CKA_SUBJECT, subject, sizeof(subject)},
 	{CKA_ID, id, sizeof(id)},
 	{CKA_SENSITIVE, &tr, sizeof(tr)},
-	{CKA_DECRYPT, &tr, sizeof(tr)},
+	{CKA_VERIFY, &tr, sizeof(tr)},
 };
-CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplate / sizeof *privateRSAKeyTemplate;;
+
+CK_ULONG privateECKeyTemplateLength = sizeof privateECKeyTemplate / sizeof *privateECKeyTemplate;;
+
+CK_ATTRIBUTE publicRSAKeyTemplateConf[] = {
+    {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
+    {CKA_TOKEN, &tr, sizeof tr},
+	{CKA_ENCRYPT, &tr, sizeof(tr)},
+	{CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)}
+};
+
+CK_ATTRIBUTE publicRSAKeyTemplateInt[] = {
+    {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
+    {CKA_TOKEN, &tr, sizeof tr},
+	{CKA_VERIFY, &tr, sizeof(tr)},
+	{CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)}
+};
+
+CK_ULONG publicRSAKeyTemplateLength = sizeof publicRSAKeyTemplateConf / sizeof *publicRSAKeyTemplateConf;
+
+CK_ATTRIBUTE privateRSAKeyTemplateConf[] = {
+    {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
+	{CKA_TOKEN, &tr, sizeof(tr)},
+	{CKA_PRIVATE, &tr, sizeof(tr)},
+	{CKA_SUBJECT, subject, sizeof(subject)},
+	{CKA_ID, id, sizeof(id)},
+	{CKA_DECRYPT, &tr, sizeof(tr)},
+	{CKA_SENSITIVE, &tr, sizeof(tr)},
+};
+
+CK_ATTRIBUTE privateRSAKeyTemplateInt[] = {
+    {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
+	{CKA_TOKEN, &tr, sizeof(tr)},
+	{CKA_PRIVATE, &tr, sizeof(tr)},
+	{CKA_SUBJECT, subject, sizeof(subject)},
+	{CKA_ID, id, sizeof(id)},
+	{CKA_SIGN, &tr, sizeof(tr)},
+	{CKA_SENSITIVE, &tr, sizeof(tr)},
+};
+
+
+CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplateConf / sizeof *privateRSAKeyTemplateConf;
+
+CK_MECHANISM mechanismGenRSA = {
+    CKM_RSA_PKCS_KEY_PAIR_GEN, NULL_PTR, 0
+};
+
+CK_MECHANISM mechanismGenEC = {
+    CKM_EC_KEY_PAIR_GEN, NULL_PTR, 0
+};
 
 void printhex(const char *s, unsigned char *buf, unsigned long length){
     int i;
@@ -109,21 +159,22 @@ int main(int argc, char *argv[]) {
     CK_RV  (*pFunc)(CK_FUNCTION_LIST_PTR_PTR ppFunctionList);
     CK_RV rc;
     CK_SESSION_HANDLE session;
-	CK_MECHANISM mechanismGen = {
-		CKM_RSA_PKCS_KEY_PAIR_GEN, NULL_PTR, 0
-	};
     int opt;
     bool delete_objects_after = false;
     char *SOpin = NULL;
+    bool eliptic_curve = false;
+    bool sign = false;
 
-    while ((opt = getopt(argc,argv,"vci:")) != EOF){
+    while ((opt = getopt(argc,argv,"vci:es")) != EOF){
         switch (opt) {
             case 'i': SOpin = optarg; break;
             case 'v': verbose=1; break;
             case 'c': delete_objects_after=true; break;
+            case 'e': eliptic_curve=true; break;
+			case 's': sign = true; break;
             case '?': USAGE; return 1;
-            default: cout<<endl; abort();
-        }
+			default: cout<<endl; abort();
+		}
     }
     int nr_args = argc - optind;
     if (nr_args != 1 && nr_args != 2) {
@@ -183,37 +234,92 @@ int main(int argc, char *argv[]) {
     PKCS11_CALL(C_OpenSession, slots[0], CKF_SERIAL_SESSION, (CK_VOID_PTR) NULL, NULL, &session);
     uint8_t random[16];
     PKCS11_CALL(C_GenerateRandom, session, random, sizeof *random);
-    printf("Generating RSA key...\n");
+    printf("Generating %s key...\n", eliptic_curve ? "EC" : "RSA");
     CK_OBJECT_HANDLE hPublicKey = (CK_OBJECT_HANDLE)NULL;
     CK_OBJECT_HANDLE hPrivateKey = (CK_OBJECT_HANDLE)NULL;
+
+    CK_ATTRIBUTE_PTR pubTemplate;
+    CK_ULONG pubTemplateLength;
+    CK_ATTRIBUTE_PTR privTemplate;
+    CK_ULONG privTemplateLength;
+    CK_MECHANISM_PTR mechanism;
+
+    if (eliptic_curve) {
+		if (sign == false) {
+			printf("Can only sign with EC key...");
+			return -1;
+		}
+        pubTemplate = publicECKeyTemplate;
+        pubTemplateLength = publicECKeyTemplateLength;
+        privTemplate = privateECKeyTemplate;
+        privTemplateLength = privateECKeyTemplateLength;
+        mechanism = &mechanismGenEC;
+    } else {
+		if (sign == true) {
+			pubTemplate = publicRSAKeyTemplateInt;
+			pubTemplateLength = publicRSAKeyTemplateLength;
+			privTemplate = privateRSAKeyTemplateInt;
+			privTemplateLength = privateRSAKeyTemplateLength;
+			mechanism = &mechanismGenRSA;
+		} else {
+			pubTemplate = publicRSAKeyTemplateConf;
+			pubTemplateLength = publicRSAKeyTemplateLength;
+			privTemplate = privateRSAKeyTemplateConf;
+			privTemplateLength = privateRSAKeyTemplateLength;
+			mechanism = &mechanismGenRSA;
+		}
+    }
     PKCS11_CALL(
         C_GenerateKeyPair,
         session,
-        &mechanismGen,
-        publicRSAKeyTemplate, publicRSAKeyTemplateLength,
-        privateRSAKeyTemplate, privateRSAKeyTemplateLength,
+        mechanism,
+        pubTemplate, pubTemplateLength,
+        privTemplate, privTemplateLength,
         &hPublicKey, &hPrivateKey);
 
-	CK_MECHANISM mechanismRSA = { CKM_RSA_PKCS, NULL_PTR, 0 };
-	PKCS11_CALL(C_EncryptInit, session, &mechanismRSA, hPublicKey);
     CK_BYTE clearText[] = { 0x11, 0x2 };
     CK_BYTE cipherText[KEY_SIZE_BYTES];
     CK_ULONG cipherTextLength = sizeof cipherText;
-	PKCS11_CALL(C_Encrypt, session, clearText, sizeof clearText, cipherText, &cipherTextLength);
+    if (sign) {
+		CK_MECHANISM mechanism;
+		if (eliptic_curve) {
+			mechanism = { CKM_ECDSA, NULL_PTR, 0 };
+		} else {
+			mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+		}
+		PKCS11_CALL(C_SignInit, session, &mechanism, hPrivateKey);
+        PKCS11_CALL(C_Sign, session, clearText, sizeof clearText, cipherText, &cipherTextLength);
+    } else {
+        CK_MECHANISM mechanismRSA = { CKM_RSA_PKCS, NULL_PTR, 0 };
+        PKCS11_CALL(C_EncryptInit, session, &mechanismRSA, hPublicKey);
+        PKCS11_CALL(C_Encrypt, session, clearText, sizeof clearText, cipherText, &cipherTextLength);
+    }
     CK_ULONG resLength;
     CK_BYTE res[KEY_SIZE_BYTES];
     int i;
-    printf("Decrypting %i times...\n", nr_times);
+    printf("%s %i times...\n", sign ? "Verify" : "Encrypting", nr_times);
     for (i=0; i<nr_times; i++) {
-        PKCS11_CALL(C_DecryptInit, session, &mechanismRSA, hPrivateKey);
-        resLength = sizeof res;
-        PKCS11_CALL(C_Decrypt, session, cipherText, cipherTextLength, res, &resLength);
-    }
-    if (resLength == sizeof clearText && memcmp(clearText, res, sizeof clearText) == 0)
-        printf("SUCCESS: RSA Generating, encrypt, decrypt successfull\n");
-    else {
-        printf("ERROR: resLength=%lu\n", resLength);
-        printhex("Buffer", res, resLength);
+        if (sign) {
+			CK_MECHANISM mechanism;
+			if (eliptic_curve) {
+				mechanism = { CKM_ECDSA, NULL_PTR, 0 };
+			} else {
+				mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+			}
+			PKCS11_CALL(C_VerifyInit, session, &mechanism, hPublicKey);
+			PKCS11_CALL(C_Verify, session, clearText, sizeof(clearText), cipherText, cipherTextLength);
+        } else {
+            CK_MECHANISM mechanismRSA = { CKM_RSA_PKCS, NULL_PTR, 0 };
+            PKCS11_CALL(C_DecryptInit, session, &mechanismRSA, hPrivateKey);
+            resLength = sizeof res;
+            PKCS11_CALL(C_Decrypt, session, cipherText, cipherTextLength, res, &resLength);
+			if (resLength == sizeof clearText && memcmp(clearText, res, sizeof clearText) == 0)
+				printf("SUCCESS: RSA Generating, encrypt, decrypt successfull\n");
+			else {
+				printf("ERROR: resLength=%lu\n", resLength);
+				//printhex("Buffer", res, resLength);
+			}
+        }
     }
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     CK_BBOOL token = true;

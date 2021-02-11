@@ -5,6 +5,8 @@
 #include "sgx_tseal.h"
 #include "sgx_trts.h"
 
+#include "../AttributeSerial.h"
+
 sgx_status_t sgx_read_rand(uint8_t *buf, size_t size){
     int i;
     for (i=0;i<(int)size; i++) buf[i] = '\xAA';
@@ -31,13 +33,31 @@ sgx_status_t SGXAPI sgx_unseal_data(const sgx_sealed_data_t *p_sealed_data, uint
 
 void printhex(const char *s, const uint8_t *buf, unsigned long length){
     int i;
-    printf("%s", s);
+    printf("%s [%lu]", s, length);
     for (i=0; i< (int)length; i++) {
         if ((i % 16) == 0) printf("\n");
         printf("%02X ", buf[i]);
     }
     printf("\n");
 }
+
+void printAttr(uint8_t *pAttr, size_t attrLen){
+    size_t nrAttributes;
+
+    AttributeSerial a = AttributeSerial(pAttr, attrLen);
+    CK_ATTRIBUTE_PTR attr = a.attributes(nrAttributes);
+    printf("\n");
+    for (size_t i=0; i<nrAttributes; i++) {
+        CK_ATTRIBUTE_PTR a = attr + i;
+        printf("Attribute[%04lu] type 0x%08lx, value[%lu] ", i, a->type, a->ulValueLen);
+        for (size_t j=0; j<a->ulValueLen; j++) {
+            printf("%02X ", ((uint8_t *)a->pValue)[j]);
+        }
+        printf("\n");
+    }
+}
+
+
 
 
 sgx_status_t sgx_rijndael128GCM_encrypt(const sgx_aes_gcm_128bit_key_t *p_key,

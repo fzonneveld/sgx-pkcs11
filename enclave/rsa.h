@@ -20,10 +20,9 @@
 RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength);
 
 int generateRSAKeyPair(
-        uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
+        uint8_t **ppRSAPublicKey, size_t *pRSAPublicKeyLength,
         Attribute &pubAttr,
-        uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
-        Attribute &privAttr);
+        uint8_t ** ppRSAPrivateKey, size_t *pRSAPrivateKeyLength, Attribute &privAttr);
 
 uint8_t *DecryptRsa(
         uint8_t *private_key_der, size_t privateKeyDERlength,
@@ -35,3 +34,12 @@ int EncryptRSA(
         const uint8_t* plaintext, size_t plaintext_length,
         uint8_t* ciphertext, size_t ciphertext_length,
         size_t* cipherTextLength, int padding);
+
+int SignRSA(
+        const uint8_t *private_key_der,
+        size_t privateKeyDERlength,
+        const uint8_t *pData,
+        size_t dataLen,
+        uint8_t *pSignature,
+        size_t *pSignatureLengthOut,
+        CK_MECHANISM_TYPE mechanism);

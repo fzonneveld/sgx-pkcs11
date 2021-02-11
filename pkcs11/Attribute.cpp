@@ -61,8 +61,6 @@ CK_ATTRIBUTE_PTR Attribute::get(CK_ATTRIBUTE_TYPE type){
     return it->second;
 }
 
-
-
 template<typename T>
 T* Attribute::getType(CK_ATTRIBUTE_TYPE type) {
     CK_ATTRIBUTE_PTR p = this->get(type);

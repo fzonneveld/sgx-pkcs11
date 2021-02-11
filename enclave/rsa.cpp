@@ -1,3 +1,4 @@
+#include <map>
 #include "rsa.h"
 #include "arm.h"
 
@@ -5,6 +6,8 @@
 #include "sgx_trts.h"
 
 #include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 
 RSA *generateRSA(size_t bits, const uint8_t *exponent, size_t exponentLength) {
 	RSA *ret = NULL;
@@ -50,14 +53,16 @@ static CK_KEY_TYPE keyType = CKK_RSA;
 static CK_BBOOL tr = CK_TRUE;
 static CK_OBJECT_CLASS privObjecClass = CKO_PRIVATE_KEY;
 
-CK_ATTRIBUTE defaultPrivateKeyAttr[] = {
+static CK_ATTRIBUTE defaultPrivateKeyAttr[] = {
     {CKA_CLASS, &privObjecClass, sizeof privObjecClass},
     {CKA_KEY_TYPE, &keyType, sizeof keyType},
 	{CKA_SENSITIVE, &tr, sizeof(tr)},
 	{CKA_ALWAYS_SENSITIVE, &tr, sizeof(tr)}
 };
 
-auto defaultPrivateKKeyAttrMap = Attribute(defaultPrivateKeyAttr, sizeof defaultPrivateKeyAttr / sizeof *defaultPrivateKeyAttr).map();
+
+
+static auto defaultPrivateKKeyAttrMap = ATTR(defaultPrivateKeyAttr).map();
 
 static CK_OBJECT_CLASS pubObjectClass = CKO_PUBLIC_KEY;
 
@@ -66,39 +71,37 @@ CK_ATTRIBUTE defaultPublicKeyAttr[] = {
     {CKA_KEY_TYPE, &keyType, sizeof keyType},
 };
 
-auto defaultPublicKeyAttrMap = Attribute(defaultPublicKeyAttr, sizeof defaultPublicKeyAttr / sizeof *defaultPublicKeyAttr).map();
+static auto defaultPublicKeyAttrMap = ATTR(defaultPublicKeyAttr).map();
 
 
 int generateRSAKeyPair(
-        uint8_t *RSAPublicKey, size_t RSAPublicKeyLength, size_t *RSAPublicKeyLengthOut,
-        Attribute &pubAttr,
-        uint8_t *RSAPrivateKey, size_t RSAPrivateKeyLength, size_t *RSAPrivateKeyLengthOut,
-        Attribute &privAttr){
+        uint8_t **ppRSAPublicKey, size_t *pRSAPublicKeyLength, Attribute &pubAttr,
+        uint8_t ** ppRSAPrivateKey, size_t *pRSAPrivateKeyLength, Attribute &privAttr){
 
     CK_ATTRIBUTE_PTR attr_modulus_bits = pubAttr.get(CKA_MODULUS_BITS);
     CK_ATTRIBUTE_PTR attr_public_exponent = pubAttr.get(CKA_PUBLIC_EXPONENT);
     int ret = -1;
     RSA *rsa_key = NULL;
-    size_t privateKeyDERlength, publicKeyLength;
-    uint8_t *pPrivateKeyDER = NULL, *pPublicKeyDER = NULL;
-    const uint8_t *rootKey;
+    int privateKeyDERlength, publicKeyDERlength;
+    uint8_t *pRSAPrivateKeyDER = NULL, *pRSAPublicKeyDER = NULL;
     CK_ULONG modulus_bits;
 
     const unsigned char *exponent = NULL;
     size_t exponentLength = 0;
-    uint8_t *privSerializedAttr  = NULL; size_t privSerLen = 0;
 
     CK_BBOOL tr = CK_TRUE;
     bool priv_decrypt = privAttr.check(CKA_DECRYPT, tr);
     bool priv_sign = privAttr.check(CKA_SIGN, tr);
 
-    if ((rootKey = getRootKey(NULL)) == NULL) goto generateRSAKeyPair_err;
 
+	ret -= 1;
     if (attr_modulus_bits == NULL || attr_modulus_bits->ulValueLen != sizeof(CK_ULONG)) goto generateRSAKeyPair_err;
 
     modulus_bits = *(CK_ULONG *)attr_modulus_bits->pValue;
+	ret -= 1;
     if (modulus_bits < 2048 || modulus_bits > 4096) goto generateRSAKeyPair_err;
 
+	ret -= 1;
     // Check attributes
     if (!( priv_sign ^ priv_decrypt)) goto generateRSAKeyPair_err;
 
@@ -109,37 +112,27 @@ int generateRSAKeyPair(
 
     ret -= 1;
 	if ((rsa_key = generateRSA(modulus_bits, exponent, exponentLength)) == NULL) goto generateRSAKeyPair_err;
-    if ((privateKeyDERlength = getRSAder(rsa_key, &pPrivateKeyDER, i2d_PrivateKey)) <= 0) goto generateRSAKeyPair_err;
-    if (0 >= (publicKeyLength = getRSAder(rsa_key, &pPublicKeyDER, i2d_PublicKey))) goto generateRSAKeyPair_err;
-    if (publicKeyLength > RSAPublicKeyLength) goto generateRSAKeyPair_err;
 
-    if ((privateKeyDERlength  + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE) > RSAPrivateKeyLength) goto generateRSAKeyPair_err;
+    if ((publicKeyDERlength = getRSAder(rsa_key, &pRSAPublicKeyDER, i2d_PUBKEY)) < 0) goto generateRSAKeyPair_err;
+    if ((privateKeyDERlength = getRSAder(rsa_key, &pRSAPrivateKeyDER, i2d_PrivateKey)) <= 0) goto generateRSAKeyPair_err;
 
-	if (SGX_SUCCESS != sgx_read_rand(RSAPrivateKey + SGX_AESGCM_MAC_SIZE, SGX_AESGCM_IV_SIZE)) goto generateRSAKeyPair_err;
+	*pRSAPublicKeyLength = publicKeyDERlength;
+	*pRSAPrivateKeyLength = privateKeyDERlength;
+
 
     pubAttr.merge(defaultPublicKeyAttrMap);
     privAttr.merge(defaultPrivateKKeyAttrMap);
 
-    if ((privSerializedAttr = privAttr.serialize(&privSerLen)) == NULL) goto generateRSAKeyPair_err;
+	*ppRSAPublicKey = pRSAPublicKeyDER;
+	*ppRSAPrivateKey = pRSAPrivateKeyDER;
 
-	if (SGX_SUCCESS != sgx_rijndael128GCM_encrypt(
-		(sgx_aes_gcm_128bit_key_t *) rootKey,
-		pPrivateKeyDER, privateKeyDERlength,
-		RSAPrivateKey + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE,
-		RSAPrivateKey + SGX_AESGCM_MAC_SIZE,
-		SGX_AESGCM_IV_SIZE,
-		privSerializedAttr, privSerLen,
-		(sgx_aes_gcm_128bit_tag_t *) (RSAPrivateKey))) goto generateRSAKeyPair_err;
-
-    *RSAPublicKeyLengthOut = publicKeyLength;
-    *RSAPrivateKeyLengthOut = privateKeyDERlength + SGX_AESGCM_MAC_SIZE + SGX_AESGCM_IV_SIZE;
-    memcpy(RSAPublicKey, pPublicKeyDER, publicKeyLength);
+	pRSAPublicKeyDER = NULL;
+	pRSAPrivateKeyDER = NULL;
     ret = 0;
 generateRSAKeyPair_err:
-    if (pPrivateKeyDER) free(pPrivateKeyDER);
-    if (pPublicKeyDER) free(pPublicKeyDER);
+    if (pRSAPublicKeyDER) free(pRSAPublicKeyDER);
+	if (pRSAPrivateKeyDER) free(pRSAPrivateKeyDER);
     if (rsa_key) RSA_free(rsa_key);
-    if (privSerializedAttr) free(privSerializedAttr);
     return ret;
 }
 
@@ -159,34 +152,64 @@ uint8_t *DecryptRsa(
     }
 	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto DecryptRSA_err;
     if ((ret = (uint8_t *)malloc(RSA_size(rsa))) == NULL) goto DecryptRSA_err;
-    *to_len = RSA_private_decrypt(ciphertext_length, ciphertext, ret, rsa, padding);
+    if (-1 == (*to_len = RSA_private_decrypt(ciphertext_length, ciphertext, ret, rsa, padding))){
+		return NULL;
+	}
 DecryptRSA_err:
     if (rsa) free(rsa);
     if (pKey) EVP_PKEY_free(pKey);
     return ret;
 }
 
-int EncryptRSA(
-        const uint8_t* public_key, size_t public_key_length,
-        const uint8_t* plaintext, size_t plaintext_length,
-        uint8_t* ciphertext, size_t ciphertext_length,
-        size_t* cipherTextLength, int padding) {
-    int len;
-    int ret = -1;
-    RSA *rsa = NULL;
+
+typedef const EVP_MD* (*md_func_t)(void);
+
+struct mechanismType {
+	int padding;
+    md_func_t mdf;
+} mechanismType_t;
+
+static std::map<CK_MECHANISM_TYPE, mechanismType> allowedSignMechanisms = {
+    { CKM_RSA_PKCS, { RSA_PKCS1_PADDING, NULL }},
+    { CKM_SHA1_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha1 }},
+    { CKM_SHA256_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha256 }},
+    { CKM_SHA384_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha384 }},
+    { CKM_SHA512_RSA_PKCS, { RSA_PKCS1_PADDING, EVP_sha256 }},
+};
+
+int SignRSA(
+        const uint8_t *private_key_der,
+        size_t privateKeyDERlength,
+        const uint8_t *pData,
+        size_t dataLen,
+        uint8_t *pSignature,
+        size_t *pSignatureLengthOut,
+        CK_MECHANISM_TYPE mechanism) {
+
     EVP_PKEY *pKey = NULL;
-	if (NULL == (pKey = EVP_PKEY_new())) goto SGXEncrypt_err;
-	if (NULL == (pKey = d2i_PublicKey(EVP_PKEY_RSA, &pKey, &public_key, public_key_length))) goto SGXEncrypt_err;
-	if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto SGXEncrypt_err;
+    auto it = allowedSignMechanisms.find(mechanism);
+	const uint8_t *endptr;
+	size_t outLen;
+	int ret = -1;
+	EVP_PKEY_CTX* ctx = NULL;
 
-	if (( len = RSA_public_encrypt(
-            plaintext_length, (uint8_t*)plaintext, (unsigned char*)ciphertext, rsa, padding)) == -1)
-        goto SGXEncrypt_err;
+    if (it == allowedSignMechanisms.end()) return -1;
 
-	*cipherTextLength = (size_t)len;
+	endptr = (const uint8_t *) private_key_der;
+	if ((pKey = d2i_PrivateKey(EVP_PKEY_RSA, &pKey, &endptr, (long) privateKeyDERlength)) == NULL){
+		return ret;
+    }
+	ctx = EVP_PKEY_CTX_new(pKey, NULL);
+	if (0 >= EVP_PKEY_sign_init(ctx)) goto SignRSA_err;
+	if (0 >= EVP_PKEY_CTX_set_rsa_padding(ctx, it->second.padding)) goto SignRSA_err;
+	if (0 >= EVP_PKEY_CTX_set_signature_md(ctx, it->second.mdf == NULL ? NULL: it->second.mdf())) goto SignRSA_err;
+	if (0 >= EVP_PKEY_sign(ctx, NULL, &outLen, pData, dataLen)) goto SignRSA_err;
+	if (outLen > *pSignatureLengthOut) goto SignRSA_err;
+	if (0 >= EVP_PKEY_sign(ctx, pSignature, &outLen, pData, dataLen)) goto SignRSA_err;
+	*pSignatureLengthOut = outLen;
     ret = 0;
-SGXEncrypt_err:
-    if (rsa) RSA_free(rsa);
+SignRSA_err:
+	if (ctx) EVP_PKEY_CTX_free(ctx);
 	if (pKey) EVP_PKEY_free(pKey);
     return ret;
 }

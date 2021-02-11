@@ -22,4 +22,8 @@ PKCS11_crypto_engine.signed.so:
 	$(MAKE) -f enclave.mk all
 
 test: test.cpp
+	gcc -g -Wall $< -lstdc++ -ldl -o $@
+
+
+test_ec: test_ec.cpp
 	gcc -g -Wall test.cpp -lstdc++ -ldl -o $@
