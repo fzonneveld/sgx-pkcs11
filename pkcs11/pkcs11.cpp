@@ -638,6 +638,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
     RSA *rsa = NULL;
     EVP_PKEY *pKey = NULL;
 	int padding = RSA_PKCS1_PADDING;
+	const uint8_t *endptr;
 
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
@@ -665,7 +666,8 @@ CK_DEFINE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession,
 	switch (*pKeyType) {
 		case CKK_RSA:
 			if (NULL == (pKey = EVP_PKEY_new())) goto C_Encrypt_err;
-			if (NULL == (pKey = d2i_PublicKey(EVP_PKEY_RSA, &pKey, (const uint8_t **)&s->operationObject.pValue, s->operationObject.valueLength))) goto C_Encrypt_err;
+			endptr = s->operationObject.pValue;
+			if (NULL == (pKey = d2i_PUBKEY(&pKey, &endptr, s->operationObject.valueLength))) goto C_Encrypt_err;
 			if (NULL == (rsa = EVP_PKEY_get1_RSA(pKey))) goto C_Encrypt_err;
 
 			if (*pulEncryptedDataLen < (CK_ULONG) RSA_size(rsa)) goto C_Encrypt_err;
@@ -1237,12 +1239,29 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECH
                     {CKA_KEY_TYPE, &keyType, sizeof keyType },
                 };
                 pubAttr.merge(keyAttribs, sizeof keyAttribs / sizeof *keyAttribs);
-                // Private key
+                privAttr.merge(keyAttribs, sizeof keyAttribs / sizeof *keyAttribs);
+            }
+			break;
+        case CKM_EC_KEY_PAIR_GEN:
+            {
+                CK_KEY_TYPE keyType = CKK_EC;
+                CK_ATTRIBUTE *pECParamsAttr;
+
+                ret = CKR_ATTRIBUTE_TYPE_INVALID;
+                if (pPubKeyType && *pPubKeyType != CKK_EC) return ret;
+                if (pPrivKeyType && *pPrivKeyType != CKK_EC) return ret;
+
+                if ((pECParamsAttr = pubAttr.get(CKA_EC_PARAMS)) == NULL) return ret;
+                CK_ATTRIBUTE keyAttribs[] = {
+                    {CKA_KEY_TYPE, &keyType, sizeof keyType },
+                };
+                pubAttr.merge(keyAttribs, sizeof keyAttribs / sizeof *keyAttribs);
                 privAttr.merge(keyAttribs, sizeof keyAttribs / sizeof *keyAttribs);
             }
 			break;
         default:
             ret = CKR_MECHANISM_INVALID;
+			return ret;
     }
     ret = GenerateKeyPair(
         s, pubAttr.map(), privAttr.map(),
