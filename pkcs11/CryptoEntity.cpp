@@ -57,7 +57,6 @@ void CryptoEntity::KeyGeneration(uint8_t **pPublicKey, size_t *pPublicKeyLength,
 	sgx_status_t stat;
     int ret;
 
-	// Set large enough for 4096
     *pPrivateKeyLength = MAX_KEY_BUF;
     *pPublicKeyLength = MAX_KEY_BUF;
 
@@ -120,7 +119,7 @@ uint8_t *CryptoEntity::Sign(const uint8_t *key, size_t keyLength, uint8_t *pAttr
 
 uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t *pAttribute, size_t attributeLen, const uint8_t* cipherData, size_t cipherDataLength, size_t* plainLength) {
 	sgx_status_t stat;
-    int max_rsa_size = 8 * 1024;
+    int max_rsa_size = 1024;
 
 	uint8_t* plainData = (uint8_t*)malloc(max_rsa_size * sizeof(uint8_t));
     int retval;
@@ -135,6 +134,7 @@ uint8_t* CryptoEntity::RSADecrypt(const uint8_t *key, size_t keyLength, uint8_t 
         printf("%s:%i retval=0x%x\n", __FILE__, __LINE__, retval);
 		throw std::runtime_error("Decryption failed\n");
     }
+	plainData = (uint8_t *)realloc(plainData, *plainLength);
 	return plainData;
 }
 

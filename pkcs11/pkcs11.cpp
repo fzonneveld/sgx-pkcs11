@@ -89,6 +89,8 @@ typedef struct pkcs11_session {
     PKCS_OPERATION operation;
     pkcs11_object_t operationObject;
     CK_MECHANISM_TYPE operationMechanismType;
+	uint8_t *part;
+	CK_ULONG partLen;
 } pkcs11_session_t;
 
 std::map<CK_SESSION_HANDLE, pkcs11_session_t> sessions;
@@ -508,19 +510,57 @@ CK_DEFINE_FUNCTION(CK_RV, C_DestroyObject)(CK_SESSION_HANDLE hSession, CK_OBJECT
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetObjectSize)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	uint8_t *pValue = NULL;
+	size_t valueLength;
+	CK_ATTRIBUTE *pAttributes = NULL;
+	CK_ULONG attributeCount;
+    int rc;
+
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+    if (0 > (rc =db->getObject(hObject, &pValue, valueLength, &pAttributes, attributeCount))) {
+        return CKR_DEVICE_ERROR;
+    }
+	*pulSize = valueLength;
+	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
+	uint8_t *pValue = NULL;
+	size_t valueLength;
+	CK_ATTRIBUTE *pAttributes = NULL;
+	CK_ULONG attributeCount;
+    int rc;
+
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
-	return CKR_FUNCTION_NOT_SUPPORTED;
 
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    if (0 > (rc =db->getObject(hObject, &pValue, valueLength, &pAttributes, attributeCount))) {
+        return CKR_DEVICE_ERROR;
+    }
+
+	while(ulCount--) {
+		Attribute attr = Attribute(pAttributes, attributeCount);
+		CK_ATTRIBUTE *pAttr = attr.get(pTemplate->type);
+		if (pTemplate->pValue == NULL) {
+			pTemplate->ulValueLen = pAttr == NULL ? CK_UNAVAILABLE_INFORMATION : pAttr->ulValueLen;
+		} else {
+			if (pTemplate->ulValueLen >= pAttr->ulValueLen) {
+				memcpy(pTemplate->pValue, pAttr->pValue, pAttr->ulValueLen);
+			} else {
+				pTemplate->ulValueLen = CK_UNAVAILABLE_INFORMATION;
+			}
+		}
+		pTemplate++;
+	}
+	return CKR_OK;
 }
 
 
@@ -781,18 +821,45 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 	}
 
 	s->operation = PKCS11_CK_OPERATION_NONE;
+
+	if (s->part) free(s->part);
+	s->part = NULL;
+	s->partLen = 0;
+	return CKR_OK;
+}
+
+CK_RV partProcess(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSuppliedPart, CK_ULONG ulSuppliedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen) {
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_DECRYPT != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+	if (NULL == (s->part = (uint8_t *)realloc(s->part, s->partLen + ulSuppliedPartLen))) {
+		return CKR_DEVICE_MEMORY;
+	}
+	memcpy(s->part + s->partLen, pSuppliedPart, ulSuppliedPartLen);
+	s->partLen += ulSuppliedPartLen;
+	// Always return NULL
+	// Just return all the data at once.
+	*pulPartLen = 0;
 	return CKR_OK;
 }
 
 CK_DEFINE_FUNCTION(CK_RV, C_DecryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	return partProcess(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen);
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_DecryptFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart, CK_ULONG_PTR pulLastPartLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	CK_RV ret;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+	ret = C_Decrypt(hSession, s->part, s->partLen, pLastPart, pulLastPartLen);
+	return ret;
 }
 
 
@@ -846,7 +913,6 @@ CK_DEFINE_FUNCTION(CK_RV, C_SignInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_P
 
     Attribute a = Attribute(o->pAttributes, o->ulAttributeCount);
     CK_OBJECT_CLASS_PTR pObjectClass = a.getType<CK_OBJECT_CLASS>(CKA_CLASS);
-    printAttr(o->pAttributes, o->ulAttributeCount);
     CK_KEY_TYPE *pKeyType = a.getType<CK_KEY_TYPE>(CKA_KEY_TYPE);
 
     if ((NULL != pMechanism->pParameter) || (0 != pMechanism->ulParameterLen))
@@ -1117,20 +1183,9 @@ CK_DEFINE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANIS
 }
 
 
-// static int check_epmty_attr(CK_ATTRIBUTE_PTR pAttr, CK_ULONG ulAttrCount){
-//     CK_ULONG i;
-//     for (i = 0; i < ulAttrCount; i++) {
-//         if (NULL == pAttr[i].pValue || 0 >= pAttr[i].ulValueLen)
-//             return 1;
-//     };
-//     return 0;
-// }
-
 CK_RV GenerateKeyPair(
     pkcs11_session_t *session,
-    // std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> publicKeyAttrMap,
     Attribute pubAttr,
-    // std::map<CK_ATTRIBUTE_TYPE, CK_ATTRIBUTE_PTR> privateKeyAttrMap,
     Attribute privAttr,
 	CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
 	CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,

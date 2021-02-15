@@ -24,15 +24,15 @@ static uint8_t CKA_EC_PARAM_PRIME_256V1[] = { 0x06,0x08,0x2a,0x86,0x48,0xce,0x3d
 
 
 
-CK_ATTRIBUTE publicECKeyTemplate[] = {
+static CK_ATTRIBUTE publicECKeyTemplate[] = {
     {CKA_KEY_TYPE, &keyTypeEC, sizeof keyTypeEC},
     {CKA_TOKEN, &tr, sizeof tr},
     {CKA_SIGN, &tr, sizeof(tr)},
     {CKA_EC_PARAMS, CKA_EC_PARAM_PRIME_256V1, sizeof(CKA_EC_PARAM_PRIME_256V1)}
 };
-CK_ULONG publicECKeyTemplateLength = sizeof publicECKeyTemplate / sizeof *publicECKeyTemplate;
+static CK_ULONG publicECKeyTemplateLength = sizeof publicECKeyTemplate / sizeof *publicECKeyTemplate;
 
-CK_ATTRIBUTE privateECKeyTemplate[] = {
+static CK_ATTRIBUTE privateECKeyTemplate[] = {
     {CKA_KEY_TYPE, &keyTypeEC, sizeof keyTypeEC},
     {CKA_TOKEN, &tr, sizeof(tr)},
     {CKA_PRIVATE, &tr, sizeof(tr)},
@@ -42,23 +42,23 @@ CK_ATTRIBUTE privateECKeyTemplate[] = {
     {CKA_VERIFY, &tr, sizeof(tr)},
 };
 
-CK_ATTRIBUTE publicRSAKeyTemplateConf[] = {
+static CK_ATTRIBUTE publicRSAKeyTemplateConf[] = {
     {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
     {CKA_TOKEN, &tr, sizeof tr},
     {CKA_ENCRYPT, &tr, sizeof(tr)},
     {CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)}
 };
 
-CK_ATTRIBUTE publicRSAKeyTemplateInt[] = {
+static CK_ATTRIBUTE publicRSAKeyTemplateInt[] = {
     {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
     {CKA_TOKEN, &tr, sizeof tr},
     {CKA_VERIFY, &tr, sizeof(tr)},
     {CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)}
 };
 
-CK_ULONG publicRSAKeyTemplateLength = sizeof publicRSAKeyTemplateConf / sizeof *publicRSAKeyTemplateConf;
+static CK_ULONG publicRSAKeyTemplateLength = sizeof publicRSAKeyTemplateConf / sizeof *publicRSAKeyTemplateConf;
 
-CK_ATTRIBUTE privateRSAKeyTemplateConf[] = {
+static CK_ATTRIBUTE privateRSAKeyTemplateConf[] = {
     {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
     {CKA_TOKEN, &tr, sizeof(tr)},
     {CKA_PRIVATE, &tr, sizeof(tr)},
@@ -68,7 +68,7 @@ CK_ATTRIBUTE privateRSAKeyTemplateConf[] = {
     {CKA_SENSITIVE, &tr, sizeof(tr)},
 };
 
-CK_ATTRIBUTE privateRSAKeyTemplateInt[] = {
+static CK_ATTRIBUTE privateRSAKeyTemplateInt[] = {
     {CKA_KEY_TYPE, &keyTypeRSA, sizeof keyTypeRSA},
     {CKA_TOKEN, &tr, sizeof(tr)},
     {CKA_PRIVATE, &tr, sizeof(tr)},
@@ -79,23 +79,23 @@ CK_ATTRIBUTE privateRSAKeyTemplateInt[] = {
 };
 
 
-void wrap_initialize(void (*func)(void)) {
+static void wrap_initialize(void (*func)(void)) {
     CK_RV ret = C_Initialize(NULL);
     CU_ASSERT_FATAL(CKR_OK == ret || ret == CKR_CRYPTOKI_NOT_INITIALIZED);
     if (func) func();
     CU_ASSERT_FATAL(CKR_OK == C_Finalize(NULL));
 }
 
-void test_initialize(){
+static void test_initialize(){
     wrap_initialize(NULL);
 }
 
-CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplateConf / sizeof *privateRSAKeyTemplateConf;
+static CK_ULONG privateRSAKeyTemplateLength = sizeof privateRSAKeyTemplateConf / sizeof *privateRSAKeyTemplateConf;
 
-CK_ULONG privateECKeyTemplateLength = sizeof privateECKeyTemplate / sizeof *privateECKeyTemplate;;
+static CK_ULONG privateECKeyTemplateLength = sizeof privateECKeyTemplate / sizeof *privateECKeyTemplate;;
 
 
-void test_C_GetInfo(void) {
+static void test_C_GetInfo(void) {
     auto func = []()
     {
         CK_INFO info;
@@ -109,7 +109,7 @@ void test_C_GetInfo(void) {
 }
 
 
-void test_C_GetSlotList(){
+static void test_C_GetSlotList(){
     auto func = []() {
         CK_ULONG pulCount;
         CU_ASSERT_FATAL(CKR_OK == C_GetSlotList(CK_TRUE, NULL, &pulCount));
@@ -121,7 +121,7 @@ void test_C_GetSlotList(){
 }
 
 
-void wrap_slot(void (* func)(CK_SLOT_ID)) {
+static void wrap_slot(void (* func)(CK_SLOT_ID)) {
     CK_RV ret = C_Initialize(NULL);
     CU_ASSERT_FATAL(CKR_OK == ret || ret == CKR_CRYPTOKI_NOT_INITIALIZED);
     CK_ULONG pulCount;
@@ -134,7 +134,7 @@ void wrap_slot(void (* func)(CK_SLOT_ID)) {
 };
 
 
-void test_C_GetSlotInfo(){
+static void test_C_GetSlotInfo(){
     auto func = [](CK_SLOT_ID slot) {
         CK_SLOT_INFO info;
         CU_ASSERT_FATAL(CKR_OK == C_GetSlotInfo(slot, &info));
@@ -146,7 +146,7 @@ void test_C_GetSlotInfo(){
     wrap_slot(func);
 }
 
-void test_C_GetTokenInfo(){
+static void test_C_GetTokenInfo(){
     auto func = [](CK_SLOT_ID slot) {
         CK_TOKEN_INFO info;
         CU_ASSERT_FATAL(CKR_OK == C_GetTokenInfo(slot, &info));
@@ -157,7 +157,7 @@ void test_C_GetTokenInfo(){
 
 extern CK_MECHANISM_TYPE mechanismList[];
 
-void test_C_GetMechanismList(){
+static void test_C_GetMechanismList(){
     auto func = [](CK_SLOT_ID slot) {
         CK_MECHANISM_TYPE *pMechanismList;
         CK_ULONG pulCount;
@@ -169,7 +169,7 @@ void test_C_GetMechanismList(){
     wrap_slot(func);
 }
 
-void test_C_OpenSession(){
+static void test_C_OpenSession(){
     auto func = [](CK_SLOT_ID slot) {
         CK_SESSION_HANDLE session;
         CU_ASSERT_FATAL(CKR_OK == C_OpenSession(slot, CKF_SERIAL_SESSION, (CK_VOID_PTR) NULL, NULL, &session));
@@ -177,7 +177,7 @@ void test_C_OpenSession(){
     wrap_slot(func);
 }
 
-CK_SESSION_HANDLE create_session() {
+static CK_SESSION_HANDLE create_session() {
     CK_SESSION_HANDLE session;
     CK_RV ret = C_Initialize(NULL);
     CU_ASSERT_FATAL(CKR_OK == ret || ret == CKR_CRYPTOKI_NOT_INITIALIZED);
@@ -191,14 +191,14 @@ CK_SESSION_HANDLE create_session() {
 }
 
 
-void wrap_session(void (* func)(CK_SESSION_HANDLE handle)) {
+static void wrap_session(void (* func)(CK_SESSION_HANDLE handle)) {
     CK_SESSION_HANDLE session = create_session();
     func(session);
     CU_ASSERT_FATAL(CKR_OK == C_Finalize(NULL));
 };
 
 
-void test_C_GenerateKeyPair(void){
+static void test_C_GenerateKeyPair(void){
     typedef struct {
         CK_MECHANISM_TYPE mechanismType;
         CK_ATTRIBUTE *pub;
@@ -235,7 +235,20 @@ void wrap_create_asym_object(void (*func)(CK_SESSION_HANDLE, CK_OBJECT_HANDLE, C
     CU_ASSERT_FATAL(CKR_OK == C_Finalize(NULL));
 }
 
-void test_C_EncryptDecrypt(void) {
+static void test_C_GetObjectSize(void) {
+    auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
+        CK_ULONG objectSize = 0;
+        CU_ASSERT_FATAL(CKR_OK == C_GetObjectSize(session, pub, &objectSize));
+        CU_ASSERT_FATAL(objectSize > 10);
+        CU_ASSERT_FATAL(CKR_OK == C_GetObjectSize(session, priv, &objectSize));
+        CU_ASSERT_FATAL(objectSize > 10);
+    };
+    CK_MECHANISM mechanism = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateConf, publicRSAKeyTemplateLength, privateRSAKeyTemplateConf, privateRSAKeyTemplateLength);
+}
+
+
+static void test_C_EncryptDecrypt(void) {
     auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
         uint8_t clearText[16] = {0x22, 0x11};
         uint8_t verifyText[1024];
@@ -257,23 +270,87 @@ void test_C_EncryptDecrypt(void) {
     wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateConf, publicRSAKeyTemplateLength, privateRSAKeyTemplateConf, privateRSAKeyTemplateLength);
 }
 
-void test_C_SignVerify(void) {
+static void test_C_EncryptDecryptUpdate(void) {
+    auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
+        uint8_t clearText[16] = {0x22, 0x11};
+        uint8_t verifyText[1024];
+        uint8_t cipherText[1024];
+        CK_RV ret;
+        CK_MECHANISM mechanism = { CKM_RSA_PKCS, NULL, 0 };
+        CK_ULONG cipherTextLength = sizeof cipherText;
+        CK_ULONG verifyTextLength1 = sizeof verifyText;
+        CU_ASSERT_FATAL(CKR_OK == C_EncryptInit(session, &mechanism, pub));
+        ret = C_Encrypt(session, clearText, sizeof clearText, cipherText, &cipherTextLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CU_ASSERT_FATAL(CKR_OK == C_DecryptInit(session, &mechanism, priv));
+        ret = C_DecryptUpdate(session, cipherText, cipherTextLength - 1, verifyText, &verifyTextLength1);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CK_ULONG verifyTextLength2 = sizeof(verifyText) - verifyTextLength1;
+        ret = C_DecryptUpdate(session, cipherText + cipherTextLength - 1, 1, verifyText + verifyTextLength1, &verifyTextLength2);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CK_ULONG verifyTextLength3 = sizeof verifyText - verifyTextLength1 - verifyTextLength2;
+        ret = C_DecryptFinal(session, verifyText + verifyTextLength1 + verifyTextLength2, &verifyTextLength3);
+        CU_ASSERT_FATAL(memcmp(clearText, verifyText, sizeof clearText) == 0);
+    };
+    CK_MECHANISM mechanism = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateConf, publicRSAKeyTemplateLength, privateRSAKeyTemplateConf, privateRSAKeyTemplateLength);
+}
+
+static void test_C_EncryptUpdateDecrypt(void) {
+    auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
+        uint8_t clearText[16] = {0x22, 0x11};
+        uint8_t verifyText[1024];
+        uint8_t cipherText[1024];
+        CK_RV ret;
+        CK_MECHANISM mechanism = { CKM_RSA_PKCS, NULL, 0 };
+        CK_ULONG cipherTextLength1 = sizeof cipherText;
+        CK_ULONG verifyTextLength = sizeof verifyText;
+        CU_ASSERT_FATAL(CKR_OK == C_EncryptInit(session, &mechanism, pub));
+        ret = C_EncryptUpdate(session, clearText, sizeof(clearText) - 1, cipherText, &cipherTextLength1);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CK_ULONG cipherTextLength2 = sizeof(cipherText) - cipherTextLength1;
+        ret = C_EncryptUpdate(session, clearText + sizeof(clearText) -1 , 1, cipherText + cipherTextLength1, &cipherTextLength2);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CK_ULONG cipherTextLength3 = sizeof(cipherText) - cipherTextLength1 - cipherTextLength2;
+        ret = C_EncryptFinal(session, cipherText, &cipherTextLength3);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CU_ASSERT_FATAL(CKR_OK == C_DecryptInit(session, &mechanism, priv));
+        ret = C_Decrypt(session, cipherText, cipherTextLength1 + cipherTextLength2 + cipherTextLength3, verifyText, &verifyTextLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        CU_ASSERT(verifyTextLength == sizeof clearText);
+        CU_ASSERT_FATAL(memcmp(clearText, verifyText, sizeof clearText) == 0);
+    };
+    CK_MECHANISM mechanism = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateConf, publicRSAKeyTemplateLength, privateRSAKeyTemplateConf, privateRSAKeyTemplateLength);
+}
+
+static void test_C_SignVerify(void) {
     auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
         uint8_t text[16] = {0x22, 0x11};
         uint8_t signature[1024];
+        CK_KEY_TYPE keyType = CKK_RSA;
+        CK_MECHANISM mechanism;
         CK_RV ret;
-        CK_MECHANISM mechanism = { CKM_RSA_PKCS, NULL, 0 };
+        CK_ATTRIBUTE attr[] = {{CKA_KEY_TYPE, &keyType, sizeof keyType}};
+
+        ret = C_GetAttributeValue(session, pub, attr, sizeof attr / sizeof *attr);
+        CU_ASSERT_FATAL(ret == CKR_OK);
+        keyType == CKK_RSA ? mechanism = { CKM_RSA_PKCS, NULL, 0 } : mechanism = { CKM_ECDSA, NULL, 0 };
         CK_ULONG signatureLength = sizeof signature;;
-        CU_ASSERT_FATAL(CKR_OK == C_SignInit(session, &mechanism, pub));
+        CU_ASSERT_FATAL(CKR_OK == C_SignInit(session, &mechanism, priv));
         ret = C_Sign(session, text, sizeof text, signature, &signatureLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_VerifyInit(session, &mechanism, pub);
         CU_ASSERT_FATAL(CKR_OK == ret);
         ret = C_Verify(session, text, sizeof text, signature, signatureLength);
         CU_ASSERT_FATAL(CKR_OK == ret);
     };
     CK_MECHANISM mechanism = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
     wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateInt, publicRSAKeyTemplateLength, privateRSAKeyTemplateInt, privateRSAKeyTemplateLength);
+    mechanism =  { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
     wrap_create_asym_object(func, &mechanism, publicECKeyTemplate, publicECKeyTemplateLength, privateECKeyTemplate, privateECKeyTemplateLength);
 }
+
 
 CU_pSuite pkcs11_suite(void){
     CU_pSuite pSuite = CU_add_suite("PKCS11", NULL, NULL);
@@ -285,6 +362,10 @@ CU_pSuite pkcs11_suite(void){
     CU_add_test(pSuite, "C_GetMechanismList", test_C_GetMechanismList);
     CU_add_test(pSuite, "C_OpenSession", test_C_OpenSession);
     CU_add_test(pSuite, "C_GenerateKeyPair", test_C_GenerateKeyPair);
+    CU_add_test(pSuite, "C_GetObjectSize", test_C_GetObjectSize);
     CU_add_test(pSuite, "C_EcnryptDecrypt", test_C_EncryptDecrypt);
+    CU_add_test(pSuite, "C_EcnryptDecryptUpdate", test_C_EncryptDecryptUpdate);
+    CU_add_test(pSuite, "C_EcnryptUpdateDecrypt", test_C_EncryptDecryptUpdate);
+    CU_add_test(pSuite, "C_SignVerify", test_C_SignVerify);
     return pSuite;
 }
