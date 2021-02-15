@@ -6,6 +6,12 @@ The main goal of this forl is to create a fully functional
 PKCS#11 device, where all the keys are protected using
 the SGX enclave architecture.
 
+Sealing key is used to protect a root key. Root key can be
+randomly generated, but also loaded using Shamir Seret Sharing Scheme.
+The root key protects all the keys in the DB (sqlite3).
+This design allows a cluster of machines to use the same root
+key and therefore transfer PKCS#11 objects from one machine
+to another.
 
 
 ## Extended original sgx-pkcs11 with following features:
