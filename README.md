@@ -23,9 +23,26 @@ the SGX enclave architecture.
      * Its Attributes are authenticated as metadata
 
 ## Wishlist:
-  * Add support for EC
   * Add support for symmetric key generation
   * Add support for remote attestaion
+
+
+## Testing
+
+CUnit is used for testing and needs to be installed:
+
+```
+    $ sudo apt-get install libcunit1-dev
+```
+
+After this 2 different makefile rules are provided for testing:
+```
+    $ make test_pkcs11
+
+    $ make  test_enclave.
+```
+
+Both run the tests and should not result in errors.
 
 
 ## Build (Copy from the original code)
