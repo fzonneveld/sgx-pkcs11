@@ -86,7 +86,7 @@ static void wrap_initialize(void (*func)(void)) {
     CU_ASSERT_FATAL(CKR_OK == C_Finalize(NULL));
 }
 
-static void test_initialize(){
+static void test_C_Initialize(){
     wrap_initialize(NULL);
 }
 
@@ -177,6 +177,28 @@ static void test_C_OpenSession(){
     wrap_slot(func);
 }
 
+static void test_C_GetSessionInfo(){
+    auto func = [](CK_SLOT_ID slot) {
+        CK_SESSION_HANDLE session = {0};
+        CK_SESSION_INFO sessionInfo;
+        CU_ASSERT_FATAL(CKR_OK == C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, (CK_VOID_PTR) NULL, NULL, &session));
+        CU_ASSERT_FATAL(CKR_OK == C_GetSessionInfo(session, &sessionInfo));
+        CU_ASSERT_FATAL(0 == sessionInfo.slotID);
+        CU_ASSERT_FATAL(CKS_RW_PUBLIC_SESSION == sessionInfo.flags);
+    };
+    wrap_slot(func);
+}
+
+static void test_C_CloseAllSessions(){
+    auto func = [](CK_SLOT_ID slot) {
+        CK_SESSION_HANDLE session = {0};
+        CK_SESSION_INFO sessionInfo;
+        CU_ASSERT_FATAL(CKR_OK == C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, (CK_VOID_PTR) NULL, NULL, &session));
+        CU_ASSERT_FATAL(CKR_OK == C_CloseAllSessions(slot));
+    };
+    wrap_slot(func);
+}
+
 static CK_SESSION_HANDLE create_session() {
     CK_SESSION_HANDLE session;
     CK_RV ret = C_Initialize(NULL);
@@ -191,9 +213,11 @@ static CK_SESSION_HANDLE create_session() {
 }
 
 
+
 static void wrap_session(void (* func)(CK_SESSION_HANDLE handle)) {
     CK_SESSION_HANDLE session = create_session();
     func(session);
+    CU_ASSERT_FATAL(CKR_OK == C_CloseSession(session));
     CU_ASSERT_FATAL(CKR_OK == C_Finalize(NULL));
 };
 
@@ -352,20 +376,91 @@ static void test_C_SignVerify(void) {
 }
 
 
+
+static void test_C_SignUpdateVerify(void) {
+    auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
+        uint8_t text[16] = {0x22, 0x11};
+        uint8_t signature[1024];
+        CK_KEY_TYPE keyType = CKK_RSA;
+        CK_MECHANISM mechanism;
+        CK_RV ret;
+        CK_ATTRIBUTE attr[] = {{CKA_KEY_TYPE, &keyType, sizeof keyType}};
+
+        ret = C_GetAttributeValue(session, pub, attr, sizeof attr / sizeof *attr);
+        CU_ASSERT_FATAL(ret == CKR_OK);
+        keyType == CKK_RSA ? mechanism = { CKM_RSA_PKCS, NULL, 0 } : mechanism = { CKM_ECDSA, NULL, 0 };
+        CK_ULONG signatureLength = sizeof signature;;
+        CU_ASSERT_FATAL(CKR_OK == C_SignInit(session, &mechanism, priv));
+        ret = C_SignUpdate(session, text, sizeof(text) -1);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_SignUpdate(session, text + sizeof(text) -1, 1);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_SignFinal(session, signature, &signatureLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_VerifyInit(session, &mechanism, pub);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_Verify(session, text, sizeof text, signature, signatureLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+    };
+    CK_MECHANISM mechanism = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateInt, publicRSAKeyTemplateLength, privateRSAKeyTemplateInt, privateRSAKeyTemplateLength);
+    mechanism =  { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicECKeyTemplate, publicECKeyTemplateLength, privateECKeyTemplate, privateECKeyTemplateLength);
+}
+
+
+static void test_C_SignVerifyUpdate(void) {
+    auto func = [](CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub, CK_OBJECT_HANDLE priv) {
+        uint8_t text[16] = {0x22, 0x11};
+        uint8_t signature[1024];
+        CK_KEY_TYPE keyType = CKK_RSA;
+        CK_MECHANISM mechanism;
+        CK_RV ret;
+        CK_ATTRIBUTE attr[] = {{CKA_KEY_TYPE, &keyType, sizeof keyType}};
+
+        ret = C_GetAttributeValue(session, pub, attr, sizeof attr / sizeof *attr);
+        CU_ASSERT_FATAL(ret == CKR_OK);
+        keyType == CKK_RSA ? mechanism = { CKM_RSA_PKCS, NULL, 0 } : mechanism = { CKM_ECDSA, NULL, 0 };
+        CK_ULONG signatureLength = sizeof signature;;
+        CU_ASSERT_FATAL(CKR_OK == C_SignInit(session, &mechanism, priv));
+        ret = C_Sign(session, text, sizeof text, signature, &signatureLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_VerifyInit(session, &mechanism, pub);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_VerifyUpdate(session, text, sizeof text -1);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_VerifyUpdate(session, text + sizeof text -1, 1);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+        ret = C_VerifyFinal(session, signature, signatureLength);
+        CU_ASSERT_FATAL(CKR_OK == ret);
+    };
+    CK_MECHANISM mechanism = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicRSAKeyTemplateInt, publicRSAKeyTemplateLength, privateRSAKeyTemplateInt, privateRSAKeyTemplateLength);
+    mechanism =  { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    wrap_create_asym_object(func, &mechanism, publicECKeyTemplate, publicECKeyTemplateLength, privateECKeyTemplate, privateECKeyTemplateLength);
+}
+
+
+
+
 CU_pSuite pkcs11_suite(void){
     CU_pSuite pSuite = CU_add_suite("PKCS11", NULL, NULL);
-    CU_add_test(pSuite, "initialize", test_initialize);
+    CU_add_test(pSuite, "C_Initialize", test_C_Initialize);
     CU_add_test(pSuite, "C_GetInfo", test_C_GetInfo);
     CU_add_test(pSuite, "C_GetSlotList", test_C_GetSlotList);
     CU_add_test(pSuite, "C_GetSlotInfo", test_C_GetSlotInfo);
     CU_add_test(pSuite, "C_GetTokenInfo", test_C_GetTokenInfo);
     CU_add_test(pSuite, "C_GetMechanismList", test_C_GetMechanismList);
     CU_add_test(pSuite, "C_OpenSession", test_C_OpenSession);
+    CU_add_test(pSuite, "C_GetSessionInfo", test_C_GetSessionInfo);
+    CU_add_test(pSuite, "C_CloseAllSessions", test_C_CloseAllSessions);
     CU_add_test(pSuite, "C_GenerateKeyPair", test_C_GenerateKeyPair);
     CU_add_test(pSuite, "C_GetObjectSize", test_C_GetObjectSize);
     CU_add_test(pSuite, "C_EcnryptDecrypt", test_C_EncryptDecrypt);
     CU_add_test(pSuite, "C_EcnryptDecryptUpdate", test_C_EncryptDecryptUpdate);
     CU_add_test(pSuite, "C_EcnryptUpdateDecrypt", test_C_EncryptDecryptUpdate);
     CU_add_test(pSuite, "C_SignVerify", test_C_SignVerify);
+    CU_add_test(pSuite, "C_SignUpdateVerify", test_C_SignUpdateVerify);
+    CU_add_test(pSuite, "C_SignVerifyUpdate", test_C_SignVerifyUpdate);
     return pSuite;
 }

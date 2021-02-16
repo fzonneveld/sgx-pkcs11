@@ -80,7 +80,7 @@ typedef struct pkcs11_object {
 
 typedef struct pkcs11_session {
     CK_ULONG slotID;
-    CK_ULONG state;
+    CK_ULONG flags;
     struct {
         CK_OBJECT_HANDLE_PTR  hObject;
         CK_ULONG ulObjectCount;
@@ -429,18 +429,18 @@ CK_DEFINE_FUNCTION(CK_RV, C_CloseSession)(CK_SESSION_HANDLE hSession)
 
 CK_DEFINE_FUNCTION(CK_RV, C_CloseAllSessions)(CK_SLOT_ID slotID)
 {
-    std::map<CK_SESSION_HANDLE, pkcs11_session_t>::iterator it;
-
-    for (it=sessions.begin(); it != sessions.end();) {
-        sessions.erase(it++);
-    }
+	sessions.clear();
 	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_GetSessionInfo)(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+	pInfo->slotID = s->slotID;
+	pInfo->flags = s->flags;
+	return CKR_OK;
 }
 
 
@@ -828,13 +828,14 @@ CK_DEFINE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEn
 	return CKR_OK;
 }
 
-CK_RV partProcess(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSuppliedPart, CK_ULONG ulSuppliedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen) {
+CK_RV partProcess(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSuppliedPart, CK_ULONG ulSuppliedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen, PKCS_OPERATION operation) {
+
 	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (PKCS11_CK_OPERATION_DECRYPT != s->operation)
+	if (operation != s->operation)
 		return CKR_OPERATION_NOT_INITIALIZED;
 	if (NULL == (s->part = (uint8_t *)realloc(s->part, s->partLen + ulSuppliedPartLen))) {
 		return CKR_DEVICE_MEMORY;
@@ -849,7 +850,7 @@ CK_RV partProcess(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSuppliedPart, CK_ULON
 
 CK_DEFINE_FUNCTION(CK_RV, C_DecryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen)
 {
-	return partProcess(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen);
+	return partProcess(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen, PKCS11_CK_OPERATION_DECRYPT);
 }
 
 
@@ -858,7 +859,12 @@ CK_DEFINE_FUNCTION(CK_RV, C_DecryptFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PT
 	CK_RV ret;
     pkcs11_session_t *s;
     if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (PKCS11_CK_OPERATION_DECRYPT != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
 	ret = C_Decrypt(hSession, s->part, s->partLen, pLastPart, pulLastPartLen);
+	if (s->part) free(s->part);
+	s->part = NULL;
+	s->partLen = 0;
 	return ret;
 }
 
@@ -986,13 +992,33 @@ CK_DEFINE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
 CK_DEFINE_FUNCTION(CK_RV, C_SignUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_SIGN != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+	if (NULL == (s->part = (uint8_t *) realloc(s->part, s->partLen + ulPartLen)))
+		return CKR_DEVICE_MEMORY;
+	memcpy(s->part + s->partLen, pPart, ulPartLen);
+	s->partLen += ulPartLen;
+	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_SignFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	CK_RV ret;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (PKCS11_CK_OPERATION_SIGN != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+	ret = C_Sign(hSession, s->part, s->partLen, pSignature, pulSignatureLen);
+	if (s->part) free(s->part);
+	s->part = NULL;
+	s->partLen = 0;
+	return ret;
 }
 
 
@@ -1131,13 +1157,33 @@ C_Verify_err:
 
 CK_DEFINE_FUNCTION(CK_RV, C_VerifyUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	if (crypto == NULL) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+
+	if (PKCS11_CK_OPERATION_VERIFY != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+	if (NULL == (s->part = (uint8_t *) realloc(s->part, s->partLen + ulPartLen)))
+		return CKR_DEVICE_MEMORY;
+	memcpy(s->part + s->partLen, pPart, ulPartLen);
+	s->partLen += ulPartLen;
+	return CKR_OK;
 }
 
 
 CK_DEFINE_FUNCTION(CK_RV, C_VerifyFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	CK_RV ret;
+    pkcs11_session_t *s;
+    if ((s = get_session(hSession)) == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (PKCS11_CK_OPERATION_VERIFY != s->operation)
+		return CKR_OPERATION_NOT_INITIALIZED;
+	ret = C_Verify(hSession, s->part, s->partLen, pSignature, ulSignatureLen);
+	if (s->part) free(s->part);
+	s->part = NULL;
+	s->partLen = 0;
+	return ret;
 }
 
 
